@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Husky pre-commit hook. Runs eslint via lint-staged on staged JS files.
+# Activates once `npx husky init` runs in a git working tree.
+npx --no-install lint-staged

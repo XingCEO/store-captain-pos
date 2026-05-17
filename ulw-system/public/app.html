@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
+  <title>店長 AI POS · 工作台</title>
+  <meta name="theme-color" content="#0f1419">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230f1419'/%3E%3Cpath d='M16 22h32v22H16z' fill='%23f4c47b'/%3E%3Cpath d='M22 28h12v3H22zm0 7h20v3H22z' fill='%230f1419'/%3E%3Ccircle cx='48' cy='18' r='6' fill='%230f8a6a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Noto+Serif+TC:wght@600;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="app" data-no-mobile-cta="1">
+
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle" hidden>
+    <div class="auth-ambient" aria-hidden="true">
+      <span class="orb orb--jade"></span>
+      <span class="orb orb--amber"></span>
+    </div>
+    <header id="siteTopbar" class="topbar" aria-label="站台導覽"></header>
+
+    <div class="auth-stage">
+      <div class="auth-copy">
+        <p class="eyebrow"><i class="dot dot--jade"></i>Demo</p>
+        <h1 id="authTitle">選擇店家身份<br>進入示範工作台</h1>
+        <p>本工作台為示範環境，以下列任一店家身份進入。正式上線會由店家網域、帳號與 PIN 進入，並保留角色權限與稽核紀錄。</p>
+        <ul class="auth-bullets">
+          <li><i class="bullet bullet--jade"></i><span>收銀員只開 POS / HUB</span></li>
+          <li><i class="bullet bullet--amber"></i><span>店長可看對帳、庫存、日報</span></li>
+          <li><i class="bullet bullet--copper"></i><span>督導跨店監控 + audit</span></li>
+        </ul>
+      </div>
+
+      <div class="auth-profiles" aria-label="店家示範">
+        <button class="profile-button" type="button" data-tenant="breakfast-a" data-store="store-001" data-role="CASHIER" data-name="晨光早餐店" data-user="早班收銀">
+          <span class="profile-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><rect x="4" y="6" width="24" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 12h24M9 19h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <div>
+            <strong>晨光早餐店</strong>
+            <span>收銀員 / POS + 接單</span>
+            <em>快速收銀、來源單確認；不開放對帳與設定。</em>
+          </div>
+          <i class="profile-arrow" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="18" height="18"><path d="M4 10h11M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </i>
+        </button>
+        <button class="profile-button" type="button" data-tenant="breakfast-a" data-store="store-001" data-role="MANAGER" data-name="晨光早餐店" data-user="店長">
+          <span class="profile-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M4 22V10l12-6 12 6v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M4 22h24v4H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </span>
+          <div>
+            <strong>晨光早餐店</strong>
+            <span>店長 / 對帳 + 庫存 + 員工</span>
+            <em>營收比對、庫存 ledger、員工與日報。</em>
+          </div>
+          <i class="profile-arrow" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="18" height="18"><path d="M4 10h11M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </i>
+        </button>
+        <button class="profile-button" type="button" data-tenant="lunchbox-b" data-store="store-001" data-role="SUPERVISOR" data-name="阿福便當" data-user="區督導">
+          <span class="profile-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8v8l5 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </span>
+          <div>
+            <strong>阿福便當</strong>
+            <span>督導 / 全工作區</span>
+            <em>跨店監控、LIVE 診斷、audit trail。</em>
+          </div>
+          <i class="profile-arrow" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="18" height="18"><path d="M4 10h11M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </i>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <div class="app-frame" hidden>
+    <header class="worktop" aria-label="店長 AI POS 狀態列">
+      <div class="brand-mark-row">
+        <a class="brand-mark" href="/" aria-label="回首頁">
+          <svg viewBox="0 0 36 36" width="34" height="34"><rect x="3" y="8" width="30" height="22" rx="5" fill="#f4c47b"/><rect x="8" y="13" width="20" height="12" rx="2" fill="#0f1419"/><rect x="10" y="16" width="9" height="2" rx="1" fill="#f4c47b"/><rect x="10" y="20" width="14" height="2" rx="1" fill="#f4c47b"/><circle cx="29" cy="11" r="4" fill="#0f8a6a"/></svg>
+        </a>
+        <div class="brand-text">
+          <p class="eyebrow">Store Captain Workspace</p>
+          <h1>尖峰收銀工作台</h1>
+        </div>
+      </div>
+
+      <div class="shift-board" aria-label="本班營運摘要">
+        <span class="metric-chip"><b id="metricProducts">0</b><i>商品</i></span>
+        <span class="metric-chip"><b id="metricCart">0</b><i>件待結</i></span>
+        <span class="metric-chip"><b id="metricSync">0</b><i>待同步</i></span>
+        <span id="netStatus" class="net-status" data-state="online">已連線</span>
+        <span id="sessionStatus" class="session-status offline">未登入</span>
+        <label class="training-toggle" title="訓練模式：訂單不送雲端、不開立發票"><input id="trainingToggle" type="checkbox"><span>訓練模式</span></label>
+      </div>
+
+      <form class="session-controls" aria-label="登入控制">
+        <input id="tenantId" value="breakfast-a" autocomplete="off" type="hidden">
+        <input id="storeId" value="store-001" autocomplete="off" type="hidden">
+        <select id="role" hidden>
+          <option>CASHIER</option>
+          <option>MANAGER</option>
+          <option>SUPERVISOR</option>
+          <option>ADMIN</option>
+        </select>
+        <div class="merchant-card" aria-live="polite">
+          <strong id="merchantName">尚未登入</strong>
+          <span id="operatorName">請選擇店家與身份</span>
+        </div>
+        <button id="loginButton" class="ghost" type="button">切換店家</button>
+        <button id="logoutButton" class="ghost" type="button">登出</button>
+      </form>
+    </header>
+
+    <main class="workspace">
+      <nav class="rail" aria-label="工作區切換">
+        <button class="nav-button active" type="button" data-view="posView" data-min-role="CASHIER">
+          <span class="nav-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 9h18M7 14h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="nav-label">POS</span>
+          <small>收銀</small>
+        </button>
+        <button class="nav-button" type="button" data-view="hubView" data-min-role="CASHIER">
+          <span class="nav-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="nav-label">HUB</span>
+          <small>接單</small>
+        </button>
+        <button class="nav-button" type="button" data-view="riskView" data-min-role="MANAGER">
+          <span class="nav-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3l9 4v5c0 5-4 9-9 10-5-1-9-5-9-10V7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 12l3 3 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="nav-label">RISK</span>
+          <small>對帳</small>
+        </button>
+        <button class="nav-button" type="button" data-view="officeView" data-min-role="MANAGER">
+          <span class="nav-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 5V3m10 2V3M3 10h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="nav-label">OPS</span>
+          <small>後台</small>
+        </button>
+        <button class="nav-button" type="button" data-view="supportView" data-min-role="MANAGER">
+          <span class="nav-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M3 18l5-7 4 4 3-4 6 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="11" r="1.5" fill="currentColor"/><circle cx="15" cy="11" r="1.5" fill="currentColor"/></svg>
+          </span>
+          <span class="nav-label">LIVE</span>
+          <small>診斷</small>
+        </button>
+      </nav>
+
+      <section id="posView" class="view active" aria-labelledby="posTitle">
+        <div class="pos-board">
+          <aside class="category-dock" aria-label="商品分類">
+            <div class="dock-head">
+              <p class="eyebrow">Menu</p>
+              <h2 id="posTitle">前台收銀</h2>
+            </div>
+            <button id="reload" class="wide ghost" type="button">重新載入</button>
+            <div id="categoryRail" class="category-list"></div>
+            <div class="operator-card">
+              <span class="op-pulse" aria-hidden="true"></span>
+              <strong>本機端末</strong>
+              <span>terminal-web-001</span>
+              <small id="syncBadge">待同步 0</small>
+            </div>
+          </aside>
+
+          <section class="product-stage" aria-label="商品區">
+            <div class="stage-head">
+              <div>
+                <p class="eyebrow">Quick Keys</p>
+                <h2>點商品，不找功能</h2>
+              </div>
+              <label class="search-box">
+                <span>商品搜尋</span>
+                <div class="search-row">
+                  <input id="productSearch" placeholder="奶茶、蛋餅、便當" autocomplete="off">
+                  <button id="scanButton" type="button" class="ghost compact" title="掃碼"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V4h4M20 7V4h-4M4 17v3h4M20 17v3h-4M7 8v8M11 8v8M15 8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>掃碼</button>
+                </div>
+              </label>
+            </div>
+            <div id="products" class="product-grid"></div>
+          </section>
+
+          <aside class="ticket" aria-label="本筆交易">
+            <div class="ticket-head">
+              <div>
+                <p class="eyebrow">Ticket</p>
+                <h2 id="activeOrderLabel">尚未建單</h2>
+              </div>
+              <button id="voidOrder" class="danger compact" type="button">作廢</button>
+            </div>
+            <ul id="cart" class="cart"></ul>
+            <div class="ticket-total">
+              <span>應收</span>
+              <strong>NT$<b id="cartTotal">0</b></strong>
+            </div>
+            <div class="payment-dock" aria-label="付款操作">
+              <button id="submitOrder" type="button">送出訂單</button>
+              <button id="payOrder" type="button">現金結帳</button>
+              <button id="cardOrder" class="ghost" type="button">刷卡記錄</button>
+            </div>
+            <div class="action-row mini-actions">
+              <button id="applyDiscount" class="ghost" type="button" data-min-role="MANAGER">主管折扣 10</button>
+              <button id="redeemCoupon" class="ghost" type="button">套 WELCOME50</button>
+              <button id="splitTender" class="ghost" type="button">混合付款</button>
+              <button id="refundOrder" class="danger compact" type="button" data-min-role="MANAGER">退貨退款</button>
+            </div>
+            <div class="action-row mini-actions">
+              <button id="invoiceSettings" class="ghost compact" type="button">發票設定</button>
+              <button id="reprintReceipt" class="ghost compact" type="button">列印收據</button>
+              <button id="showOrderQr" class="ghost compact" type="button">建立 QR 取餐連結</button>
+            </div>
+            <pre id="orderResult" class="receipt-output">等待前台操作</pre>
+          </aside>
+        </div>
+      </section>
+
+      <section id="hubView" class="view" aria-labelledby="hubTitle">
+        <div class="module-grid">
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">Order Hub</p><h2 id="hubTitle">QR / LINE / 電話單池</h2></div><button id="loadHub" class="ghost" type="button">刷新</button></div>
+            <div class="action-row">
+              <button id="createQrOrder" type="button">建立 QR 單</button>
+              <button id="createLineOrder" type="button">建立 LINE 單</button>
+              <button id="createPhoneOrder" type="button">建立電話單</button>
+              <button id="confirmChannelOrder" class="ghost" type="button">確認首筆來源單</button>
+            </div>
+            <div id="hub" class="hub-list"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Cash Shift</p><h2>開班交班</h2></div></div>
+            <label>備用金 <input id="openingCash" type="number" value="1000"></label>
+            <label>盤點現金 <input id="closingCash" type="number" value="1200"></label>
+            <div class="action-row"><button id="openDrawer" type="button" data-min-role="SUPERVISOR">開班</button><button id="closeDrawer" type="button" data-min-role="SUPERVISOR">交班</button><button id="drawerReport" class="ghost" type="button" data-min-role="MANAGER">報表</button></div>
+            <pre id="drawerResult" class="receipt-output small-output">尚未開班</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Print Queue</p><h2>收據與廚房單</h2></div></div>
+            <div class="action-row"><button id="loadPrintJobs" type="button">讀取佇列</button><button id="retryPrintJob" class="ghost" type="button">重打失敗</button></div>
+            <pre id="printResult" class="receipt-output small-output">尚未讀取列印佇列</pre>
+          </article>
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">KDS</p><h2>製作與叫號</h2></div><button id="loadKds" class="ghost" type="button">讀取 KDS</button></div>
+            <div class="action-row"><button id="startKdsOrder" type="button">開始首筆</button><button id="readyKdsOrder" class="ghost" type="button">叫號完成</button></div>
+            <pre id="kdsResult" class="receipt-output small-output">尚未讀取 KDS</pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="riskView" class="view" aria-labelledby="riskTitle">
+        <div class="module-grid">
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">Finance Control</p><h2 id="riskTitle">訂單、付款、發票三方對帳</h2></div></div>
+            <div class="action-row"><button id="loadReconciliation" type="button">今日三方比對</button><button id="loadPayments" class="ghost" type="button">付款明細</button><button id="loadReports" class="ghost" type="button">日報排行</button></div>
+            <pre id="reconcileResult" class="receipt-output">尚未對帳</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Invoice Sandbox</p><h2>發票健康檢查</h2></div></div>
+            <p class="note">正式電子發票需完成會計師、加值中心、字軌與補傳 gate；此畫面只標示 sandbox 佇列。</p>
+            <div class="action-row"><button id="loadInvoiceHealth" type="button">讀取佇列</button><button id="markInvoiceUploaded" class="ghost" type="button">標記上傳</button></div>
+            <button id="voidInvoice" class="danger compact" type="button">Sandbox 作廢首筆</button>
+            <pre id="invoiceResult" class="receipt-output small-output">尚未讀取發票狀態</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Accounting Export</p><h2>會計 CSV</h2></div></div>
+            <p class="note">「建立匯出」走伺服器佇列，會留下匯出單號與 audit；「本機下載 CSV」直接由瀏覽器產生檔案，需先在 RISK 面板讀過日報。</p>
+            <div class="action-row"><button id="createReportExport" type="button">建立匯出</button><button id="loadReportExport" class="ghost" type="button">讀取狀態</button><button id="localCsvExport" class="ghost" type="button">本機下載 CSV</button></div>
+            <pre id="exportResult" class="receipt-output small-output">尚未建立匯出</pre>
+          </article>
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">Daily Report</p><h2>日營收與熱銷排行</h2></div></div>
+            <pre id="reportResult" class="receipt-output">尚未產生日報</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Sync Repair</p><h2>同步補救</h2></div><button id="loadSyncJobs" class="ghost" type="button">讀取</button></div>
+            <div class="action-row"><button id="retrySyncJob" type="button">重試首筆</button><button id="resolveSyncJob" class="ghost" type="button">人工標記同步</button></div>
+            <pre id="syncRepairResult" class="receipt-output small-output">尚未讀取同步佇列</pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="officeView" class="view" aria-labelledby="officeTitle">
+        <div class="module-grid">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Catalog</p><h2 id="officeTitle">商品後台</h2></div></div>
+            <label>商品名稱 <input id="newProductName" value="黑糖鮮奶" autocomplete="off"></label>
+            <label>SKU <input id="newSku" value="DRINK-BROWN-SUGAR" autocomplete="off"></label>
+            <label>價格 <input id="newPrice" type="number" value="70"></label>
+            <button id="createProduct" type="button">新增並發佈</button>
+            <div class="action-row"><button id="loadCategories" class="ghost" type="button">分類</button><button id="exportCatalog" class="ghost" type="button">匯出菜單</button><button id="importCatalog" class="ghost" type="button">匯入樣品</button></div>
+            <pre id="catalogResult" class="receipt-output small-output">尚未建立商品</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Inventory Ledger</p><h2>庫存風險</h2></div><button id="loadInventory" class="ghost" type="button">讀取</button></div>
+            <label>SKU <input id="inventorySku" placeholder="讀取後自動帶入" autocomplete="off"></label>
+            <label>異動數量 <input id="inventoryQty" type="number" value="5"></label>
+            <label>原因 <select id="inventoryReason"><option>RECEIVE</option><option>WASTE</option><option>COUNT_ADJUST</option></select></label>
+            <button id="adjustInventory" type="button">寫入 ledger</button>
+            <div class="action-row"><button id="postStockCount" class="ghost" type="button">盤點首項</button><button id="recordTransfer" class="ghost" type="button">調撥首項</button></div>
+            <pre id="inventoryResult" class="receipt-output small-output">尚未讀取庫存</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Member</p><h2>手機會員</h2></div></div>
+            <label>手機 <input id="memberPhone" value="0912345678" autocomplete="off"></label>
+            <label>姓名 <input id="memberName" value="陳小姐" autocomplete="off"></label>
+            <div class="action-row"><button id="createMember" type="button">建立會員</button><button id="searchMember" class="ghost" type="button">查詢</button></div>
+            <div class="action-row"><button id="loadCoupons" class="ghost" type="button">優惠券</button><button id="adjustPoints" class="ghost" type="button">點數 +10</button></div>
+            <pre id="memberResult" class="receipt-output small-output">尚未查詢會員</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Staff / Settings</p><h2>員工與設定</h2></div></div>
+            <label>新員工名 <input id="newUserName" value="早班收銀" autocomplete="off"></label>
+            <label>PIN <input id="newUserPin" value="1234" autocomplete="off"></label>
+            <div class="action-row"><button id="loadUsers" type="button">員工</button><button id="createUser" class="ghost" type="button">新增收銀</button><button id="loadStoreSettings" class="ghost" type="button">設定</button></div>
+            <pre id="settingsResult" class="receipt-output small-output">尚未讀取設定</pre>
+          </article>
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">Audit Trail</p><h2>稽核紀錄</h2></div><button id="loadAudit" class="ghost" type="button">讀取 Audit</button></div>
+            <pre id="auditResult" class="receipt-output">等待查詢</pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="supportView" class="view" aria-labelledby="supportTitle">
+        <div class="module-grid">
+          <article class="panel span-2">
+            <div class="panel-head"><div><p class="eyebrow">Boss Brief</p><h2 id="supportTitle">老闆日報</h2></div><button id="loadAiBrief" type="button">產生摘要</button></div>
+            <p class="note">AI 只做摘要、異常提醒與可審核建議；不自動下單、改價或發促銷。</p>
+            <pre id="aiResult" class="receipt-output">尚未產生 AI 摘要</pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Terminal Live</p><h2>遠端診斷</h2></div></div>
+            <div class="action-row"><button id="sendHeartbeat" type="button">送出 Heartbeat</button><button id="loadTelemetry" class="ghost" type="button">讀取儀表板</button></div>
+            <pre id="telemetryResult" class="receipt-output small-output">等待端末回報</pre>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <div id="statusLine" class="status-line" role="status" aria-live="polite">系統啟動中</div>
+  </div>
+
+  <div id="modalRoot" class="modal-root" aria-hidden="true"></div>
+
+  <script src="/lib/qrcode.js"></script>
+  <script src="/lib/pos-extras.js"></script>
+  <script src="/app.js"></script>
+  <script src="/lib/topbar.js" defer></script>
+  <script src="/site.js" defer></script>
+</body>
+</html>

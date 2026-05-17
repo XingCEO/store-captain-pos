@@ -1,0 +1,80 @@
+{
+  "title": "ulw-system / 店長 AI POS",
+  "uid": "ulw-system",
+  "schemaVersion": 38,
+  "tags": ["ulw-system", "pos"],
+  "timezone": "Asia/Taipei",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Requests / sec",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sum(rate(ulw_http_requests_total[1m]))" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "5xx rate",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "sum(rate(ulw_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(ulw_http_requests_total[5m]))" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [
+        { "value": null, "color": "green" },
+        { "value": 0.005, "color": "yellow" },
+        { "value": 0.01, "color": "red" }
+      ]}}}
+    },
+    {
+      "id": 3, "type": "stat", "title": "Orders / min",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "60 * sum(rate(ulw_orders_created_total[5m]))" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Outbox pending",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "ulw_outbox_pending_jobs" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "HTTP requests by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "sum by (status) (rate(ulw_http_requests_total[1m]))", "legendFormat": "{{status}}" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "DB query duration (p50/p95/p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(ulw_db_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(ulw_db_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(ulw_db_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Outbox state transitions",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "expr": "sum by (state) (rate(ulw_outbox_jobs_total[5m]))", "legendFormat": "{{state}}" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Audit rows / min by action",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "60 * sum by (action) (rate(ulw_audit_logs_total[5m]))", "legendFormat": "{{action}}" }]
+    },
+    {
+      "id": 9, "type": "stat", "title": "Telemetry UNREACHABLE",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 20 },
+      "targets": [{ "expr": "ulw_telemetry_unreachable_snapshots" }]
+    },
+    {
+      "id": 10, "type": "stat", "title": "Outbox DEAD_LETTER total",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 20 },
+      "targets": [{ "expr": "ulw_outbox_dead_letter_total" }]
+    },
+    {
+      "id": 11, "type": "stat", "title": "Rate-limit rejects / min",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+      "targets": [{ "expr": "60 * sum(rate(ulw_rate_limit_rejects_total[5m]))" }]
+    },
+    {
+      "id": 12, "type": "stat", "title": "Idempotency replays / min",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "targets": [{ "expr": "60 * sum(rate(ulw_idempotency_replays_total[5m]))" }]
+    }
+  ]
+}

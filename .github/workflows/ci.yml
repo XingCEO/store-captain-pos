@@ -1,0 +1,44 @@
+name: ulw-system CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['20', '22']
+    defaults:
+      run:
+        working-directory: ulw-system
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: ulw-system/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Lint
+        run: npm run lint -- --max-warnings 0
+      - name: Unit + integration tests
+        run: npm test
+      - name: Audit (production deps only)
+        run: npm audit --omit=dev --audit-level=high || true
+      - name: Start server and run smoke (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          DISABLE_BACKGROUND_WORKERS=1 LOG_LEVEL=warn node src/server.js &
+          SERVER_PID=$!
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            curl -sf http://localhost:3100/health && break || sleep 1
+          done
+          node scripts/smoke.js
+          kill $SERVER_PID || true

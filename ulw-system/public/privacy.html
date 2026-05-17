@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
+  <meta name="description" content="店長 AI POS 隱私政策。">
+  <meta name="theme-color" content="#0f1419">
+  <title>隱私政策 · 店長 AI POS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230f1419'/%3E%3Cpath d='M16 22h32v22H16z' fill='%23f4c47b'/%3E%3Cpath d='M22 28h12v3H22zm0 7h20v3H22z' fill='%230f1419'/%3E%3Ccircle cx='48' cy='18' r='6' fill='%230f8a6a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Noto+Serif+TC:wght@600;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body class="site">
+  <div class="bg-mesh" aria-hidden="true"><span class="mesh-orb mesh-orb--amber"></span></div>
+
+  <header id="siteTopbar" class="topbar" aria-label="站台導覽"></header>
+  <a class="skip-link" href="#main">跳到主要內容</a>
+
+  <main id="main" class="legal-page">
+    <article class="legal-card">
+      <p class="eyebrow"><i class="dot dot--amber"></i>Privacy Policy</p>
+      <h1>隱私政策</h1>
+      <p class="legal-meta">最後更新：2026-05-15。本政策說明 Store Captain Cloud 如何蒐集、處理、保存與保護店家與顧客資料。</p>
+
+      <section>
+        <h2>1. 蒐集的資料</h2>
+        <ul>
+          <li><b>店家資料</b>：店名、聯絡人、電子郵件、店家類型、地址、電話、稅籍資料（如有）。</li>
+          <li><b>員工資料</b>：員工姓名、PIN、角色、班別、稽核紀錄（誰、什麼時間、操作什麼）。</li>
+          <li><b>顧客資料</b>：手機號碼、姓名（選填）、LINE 綁定、點數、消費紀錄、發票載具（依顧客授權）。</li>
+          <li><b>訂單與付款</b>：商品、金額、付款方式、發票字軌、授權碼最後 4 碼（顯示用）。</li>
+          <li><b>技術資料</b>：終端 ID、IP、瀏覽器、heartbeat、同步延遲、錯誤訊息。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>2. 不蒐集 / 不保存的資料</h2>
+        <ul>
+          <li>完整信用卡號、CVV、磁條資料、PIN block。</li>
+          <li>顧客密碼或銀行帳號明文。</li>
+          <li>未經店家授權之第三方平台帳號內容。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>3. 使用目的</h2>
+        <p>蒐集之資料僅用於：(a) 提供 POS、發票、會員、報表、AI 摘要與同步補救服務；(b) 法定稅務與會計留存；(c) 服務改善（去識別化統計）；(d) 與店家溝通服務變動。</p>
+        <p>本服務不會將店家或顧客資料出售予第三方。</p>
+      </section>
+
+      <section>
+        <h2>4. 第三方處理者</h2>
+        <ul>
+          <li>金流（PSP / 刷卡機 / 行動支付）：處理付款授權，僅取得交易序號與授權狀態。</li>
+          <li>電子發票加值中心：上傳 B2C / B2B 發票、字軌與作廢資料。</li>
+          <li>雲端基礎設施供應商：資料儲存、加密、備份。</li>
+          <li>LINE / Google / Apple 帳號：僅在店家主動使用第三方登入時取得 email 與基本識別。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>5. 多租戶隔離</h2>
+        <p>每個店家為獨立 tenant，資料存取受 tenant scope 限制。任何跨租戶查詢（如客服故障排除）必須通過 audit log 與授權流程。</p>
+      </section>
+
+      <section>
+        <h2>6. 加密與安全</h2>
+        <p>傳輸層使用 TLS 1.2+，靜態資料以資料庫層級加密。Audit log 不可由店家或員工自行刪改。敏感操作（折扣、作廢、退款）需 PIN 與角色驗證。</p>
+      </section>
+
+      <section>
+        <h2>7. 顧客資料權利</h2>
+        <p>店家依個資法為個資擁有者之資料蒐集者，應自行於收銀流程提供告知並取得同意。Store Captain 提供「資料匯出」與「資料刪除」工具供店家行使顧客權利之代為操作。</p>
+      </section>
+
+      <section>
+        <h2>8. 保存期限</h2>
+        <p>交易與稅務資料依稅法規定保存最少 5 年；其他資料於店家終止服務後 90 天內刪除或匿名化。</p>
+      </section>
+
+      <section>
+        <h2>9. Cookie 與本機儲存</h2>
+        <p>本服務在瀏覽器使用 sessionStorage / localStorage 儲存 session token、訓練模式狀態、發票設定。Service Worker 快取靜態檔與離線 outbox。離開本服務時可由瀏覽器設定清除。</p>
+      </section>
+
+      <section>
+        <h2>10. 聯絡 / 申訴</h2>
+        <p>隱私問題、個資查閱或刪除請求：<a class="link-jade" href="mailto:hello@storecaptain.local">hello@storecaptain.local</a>。</p>
+      </section>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" width="32" height="32"><rect x="3" y="8" width="30" height="22" rx="5" fill="#f7f5ee"/><rect x="8" y="13" width="20" height="12" rx="2" fill="#0f1419"/><rect x="10" y="16" width="9" height="2" rx="1" fill="#f4c47b"/><rect x="10" y="20" width="14" height="2" rx="1" fill="#f4c47b"/><circle cx="29" cy="11" r="4" fill="#0f8a6a"/></svg></span>
+        <div><strong>店長 AI POS</strong><p>小店付得起，連鎖也夠用的雲端 POS。</p></div>
+      </div>
+      <nav aria-label="產品連結"><h4>產品</h4><a href="/product.html">功能模組</a><a href="/product.html#workflow">店務流程</a><a href="/app.html">示範工作台</a></nav>
+      <nav aria-label="方案連結"><h4>方案</h4><a href="/pricing.html">價格</a><a href="/pricing.html#faq">常見問題</a><a href="/login.html">登入 / 註冊</a></nav>
+      <nav aria-label="合規連結"><h4>合規</h4><a href="/terms.html">服務條款</a><a href="/privacy.html">隱私政策</a><a href="mailto:hello@storecaptain.local">聯絡</a></nav>
+    </div>
+    <div class="footer-bar"><span>&copy; 2026 Store Captain Cloud</span><span>v0.9.3</span></div>
+  </footer>
+
+  <script src="/lib/topbar.js" defer></script>
+  <script src="/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "name": "ulw-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "店長 AI POS full-surface operations system",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "worker": "node src/workers/syncWorker.js",
+    "test": "node --test --test-reporter=spec --test-concurrency=4 \"tests/*.test.js\"",
+    "test:a11y": "node --test --test-reporter=spec tests/a11y.test.js",
+    "smoke": "node scripts/smoke.js",
+    "lint": "eslint src tests scripts",
+    "dev": "nodemon src/server.js",
+    "backup": "node scripts/backup.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.76.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+    "@opentelemetry/sdk-node": "^0.218.0",
+    "@sentry/node": "^10.53.1",
+    "better-sqlite3": "^12.10.0",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.20.0",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "prom-client": "^15.1.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@commitlint/cli": "^21.0.1",
+    "@commitlint/config-conventional": "^21.0.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^10.4.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "nodemon": "^3.1.14"
+  }
+}

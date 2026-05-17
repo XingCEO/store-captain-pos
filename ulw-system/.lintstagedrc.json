@@ -1,0 +1,5 @@
+{
+  "src/**/*.js": "eslint --max-warnings 0",
+  "tests/**/*.js": "eslint --max-warnings 0",
+  "scripts/**/*.js": "eslint --max-warnings 0"
+}

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Runtime data
+**/data/
+ulw-system/data-test-*/
+ulw-system/.server-pid.txt
+ulw-system/.server.log
+ulw-system/.server.err
+debug.log
+**/debug.log
+ulw-system/tmp_*.out
+ulw-system/tmp_*.err
+ulw-system/*.png
+
+# OMC / OMX state — never commit
+**/.omc/
+**/.omx/
+**/.sisyphus/
+**/.playwright-mcp/
+
+# Backups produced by caveman-compress
+*.original.md
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Ad-hoc test artifacts at repo root
+/test-*.png
+/qrcode-test.js
+/test-qr.cjs

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
+  <meta name="description" content="店長 AI POS 產品功能：12 個模組、5 個工作區、痛點對應解法、適用店型、與其他 POS 比較、AI 老闆助手。">
+  <meta name="theme-color" content="#0f1419">
+  <title>產品功能 · 店長 AI POS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230f1419'/%3E%3Cpath d='M16 22h32v22H16z' fill='%23f4c47b'/%3E%3Cpath d='M22 28h12v3H22zm0 7h20v3H22z' fill='%230f1419'/%3E%3Ccircle cx='48' cy='18' r='6' fill='%230f8a6a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Noto+Serif+TC:wght@600;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body class="site">
+  <div class="bg-mesh" aria-hidden="true">
+    <span class="mesh-orb mesh-orb--jade"></span>
+    <span class="mesh-orb mesh-orb--amber"></span>
+  </div>
+
+  <header id="siteTopbar" class="topbar" aria-label="站台導覽"></header>
+  <a class="skip-link" href="#main">跳到主要內容</a>
+
+  <main id="main">
+    <section class="page-hero">
+      <p class="eyebrow"><i class="dot dot--jade"></i>Product</p>
+      <h1>產品功能 — 12 模組 / 5 工作區 / 1 條完整店務流程</h1>
+      <p class="lead">這頁告訴你：每個模組能做什麼、不能做什麼，以及它在店務流程中的位置。每張卡都對應到一條可被稽核、可走通的真實流程。</p>
+      <nav class="anchor-nav" aria-label="頁內導覽">
+        <a href="#pain">痛點 → 解法</a>
+        <a href="#workflow">店務流程</a>
+        <a href="#features">功能模組</a>
+        <a href="#industries">適用店型</a>
+        <a href="#ai">AI 老闆助手</a>
+        <a href="#compare">產品比較</a>
+        <a href="#gallery">畫面</a>
+      </nav>
+    </section>
+
+    <section id="pain" class="section section--pain" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot dot--copper"></i>Pain → Fix</p>
+        <h2>店家每天會遇到的 7 件麻煩事</h2>
+        <p class="lead">不是抽象的「使用者體驗」，是具體的「電話接單聽錯」「發票漏傳」「同步失敗」。</p>
+      </header>
+      <ul class="pain-list">
+        <li>
+          <span class="pain-q">接單聽錯</span>
+          <span class="pain-a">QR / LINE / 電話進同池；改動入 audit。</span>
+        </li>
+        <li>
+          <span class="pain-q">尖峰卡住</span>
+          <span class="pain-a">快選、修飾預設、一鍵結帳；發票自動帶字軌。</span>
+        </li>
+        <li>
+          <span class="pain-q">外送看不清</span>
+          <span class="pain-a">平台單標抽成；月底看外送與自家通路毛利。</span>
+        </li>
+        <li>
+          <span class="pain-q">發票漏傳</span>
+          <span class="pain-a">待上傳、異常、作廢一眼看；可批次補傳。</span>
+        </li>
+        <li>
+          <span class="pain-q">報表太散</span>
+          <span class="pain-a">AI 日報只收斂營收、熱銷、異常與明日建議。</span>
+        </li>
+        <li>
+          <span class="pain-q">庫存不準</span>
+          <span class="pain-a">Ledger 追收貨、領用、盤點、報廢與操作人。</span>
+        </li>
+        <li>
+          <span class="pain-q">折扣黑箱</span>
+          <span class="pain-a">折扣、作廢、退款需 PIN；日報列敏感動作。</span>
+        </li>
+      </ul>
+    </section>
+
+    <section id="workflow" class="section section--workflow" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot dot--jade"></i>Workflow</p>
+        <h2>從接單到日報，<span class="ink-amber">一條走完</span></h2>
+        <p class="lead">每個節點都有狀態、補救與稽核。沒有「下個版本再做」這種藉口。</p>
+      </header>
+      <div class="flow-board">
+        <div class="flow-node flow-node--in">
+          <span class="flow-pill">輸入</span>
+          <h3>來源單池</h3>
+          <ul><li>POS 現場點單</li><li>QR / LINE / 電話</li><li>外送平台同步</li></ul>
+        </div>
+        <svg class="flow-arrow" viewBox="0 0 80 24" aria-hidden="true"><path d="M2 12 H70 M64 5 L76 12 L64 19" fill="none" stroke="#0a5e48" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="flow-node flow-node--core">
+          <span class="flow-pill">中樞</span>
+          <h3>訂單 × 付款 × 發票</h3>
+          <ul><li>單一 orderId 串三方</li><li>幂等 idempotencyKey</li><li>事件 outbox 自動補傳</li></ul>
+        </div>
+        <svg class="flow-arrow" viewBox="0 0 80 24" aria-hidden="true"><path d="M2 12 H70 M64 5 L76 12 L64 19" fill="none" stroke="#0a5e48" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="flow-node flow-node--out">
+          <span class="flow-pill">產出</span>
+          <h3>廚房 · 收據 · 同步</h3>
+          <ul><li>KDS 製作 / 叫號</li><li>收據 + 廚房單列印</li><li>雲端同步 + 重試</li></ul>
+        </div>
+        <div class="flow-side flow-side--top">
+          <span class="flow-pill flow-pill--amber">風控旁路</span>
+          <ul><li>角色權限與 PIN</li><li>對帳缺口 alert</li><li>同步失敗補救佇列</li></ul>
+        </div>
+        <div class="flow-side flow-side--bottom">
+          <span class="flow-pill flow-pill--copper">回饋迴圈</span>
+          <ul><li>日營收 / 熱銷 / 退款</li><li>會員點數 · 優惠券核銷</li><li>AI 老闆摘要（需核可）</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section section--zones" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot dot--copper"></i>Modules</p>
+        <h2>5 個工作區，<span class="ink-jade">12 個模組</span> 串成一條流程</h2>
+        <p class="lead">不是「12 個各自獨立的功能」。每個模組都掛在某個工作區下、對應某個角色、出現在某條流程上。</p>
+      </header>
+      <div class="zone-grid">
+        <article class="zone-card zone-card--pos">
+          <header>
+            <span class="zone-num">POS</span>
+            <div><h3>收銀工作區</h3><p>收銀員 · 結帳前台</p></div>
+          </header>
+          <ul class="zone-modules">
+            <li><b>POS 收銀</b><span>商品、修飾、折扣、退款；一張訂單</span></li>
+            <li><b>會員與優惠券</b><span>手機綁定、點數、券核銷</span></li>
+            <li><b>開班 / 交班</b><span>備用金、盤點、差異追蹤</span></li>
+          </ul>
+        </article>
+
+        <article class="zone-card zone-card--hub">
+          <header>
+            <span class="zone-num">HUB</span>
+            <div><h3>接單中樞</h3><p>收銀員 · 廚房</p></div>
+          </header>
+          <ul class="zone-modules">
+            <li><b>線上接單</b><span>POS / QR / LINE / 電話 / 外送同池</span></li>
+            <li><b>廚房顯示 KDS</b><span>製作、完成、叫號、逾時</span></li>
+          </ul>
+        </article>
+
+        <article class="zone-card zone-card--risk">
+          <header>
+            <span class="zone-num">RISK</span>
+            <div><h3>對帳與發票</h3><p>店長 · 督導</p></div>
+          </header>
+          <ul class="zone-modules">
+            <li><b>三方對帳</b><span>訂單 × 付款 × 發票，差異標記</span></li>
+            <li><b>電子發票 sandbox</b><span>字軌、上傳、補傳、作廢</span></li>
+            <li><b>同步補救</b><span>重試 / override / 死信佇列</span></li>
+          </ul>
+        </article>
+
+        <article class="zone-card zone-card--ops">
+          <header>
+            <span class="zone-num">OPS</span>
+            <div><h3>店務後台</h3><p>店長 · 管理員</p></div>
+          </header>
+          <ul class="zone-modules">
+            <li><b>庫存 ledger</b><span>收貨、領用、盤點、報廢、調撥</span></li>
+            <li><b>角色與權限</b><span>PIN、多店切換、audit</span></li>
+            <li><b>商品 / 員工 / 設定</b><span>菜單、員工、稅務</span></li>
+          </ul>
+        </article>
+
+        <article class="zone-card zone-card--live">
+          <header>
+            <span class="zone-num">LIVE</span>
+            <div><h3>診斷 + AI</h3><p>店長 · 督導</p></div>
+          </header>
+          <ul class="zone-modules">
+            <li><b>AI 老闆日報</b><span>摘要、異常、需核可建議</span></li>
+            <li><b>端末診斷</b><span>Heartbeat、印表機、同步延遲</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="industries" class="section section--industries" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot dot--amber"></i>Fit</p>
+        <h2>先打外帶型小店，<span class="ink-jade">每一型都做透</span></h2>
+        <p class="lead">不是通用 POS。針對 4 種店型把流程做順。</p>
+      </header>
+      <div class="industries-grid">
+        <article class="industry-card">
+          <span class="industry-glyph" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="34" r="20" fill="#f4c47b"/><path d="M22 30c2-4 8-6 10-6s8 2 10 6" stroke="#0f1419" stroke-width="2.4" stroke-linecap="round" fill="none"/><circle cx="26" cy="28" r="2" fill="#0f1419"/><circle cx="38" cy="28" r="2" fill="#0f1419"/><path d="M14 50h36" stroke="#0a5e48" stroke-width="3" stroke-linecap="round"/></svg></span>
+          <h3>早餐尖峰</h3><p>06:30-09:30 的爆量怎麼接？我們把點單 → 廚房 → 出餐 → 找零壓進 4 秒以內。</p><ul><li>快速分類</li><li>會員快選</li><li>廚房叫號</li></ul>
+        </article>
+        <article class="industry-card">
+          <span class="industry-glyph" aria-hidden="true"><svg viewBox="0 0 64 64"><path d="M22 14h20l-2 36H24z" fill="#0f8a6a"/><path d="M22 14c0-3 4-5 10-5s10 2 10 5" fill="none" stroke="#0f1419" stroke-width="2.4" stroke-linecap="round"/><path d="M28 22v22M36 22v22" stroke="rgba(255,255,255,.6)" stroke-width="2" stroke-linecap="round"/></svg></span>
+          <h3>飲料外帶</h3><p>修飾選項（甜度/冰量）、外送平台同步、LINE 群點單。一張單把所有來源整合。</p><ul><li>多修飾</li><li>外送同步</li><li>群組單</li></ul>
+        </article>
+        <article class="industry-card">
+          <span class="industry-glyph" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="12" y="20" width="40" height="28" rx="4" fill="#b35324"/><path d="M16 28h32M16 36h22M16 42h18" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><path d="M22 20v-4h20v4" stroke="#0f1419" stroke-width="2.4" fill="none"/></svg></span>
+          <h3>便當預訂</h3><p>預訂單、收款定金、出餐排程、發票一次處理。中午尖峰不再壓收銀檯。</p><ul><li>預訂排程</li><li>批次出餐</li><li>定金管理</li></ul>
+        </article>
+        <article class="industry-card">
+          <span class="industry-glyph" aria-hidden="true"><svg viewBox="0 0 64 64"><path d="M14 24h32v6c0 10-8 18-16 18S14 40 14 30z" fill="#0f1419"/><path d="M46 28h6a4 4 0 0 1 0 8h-6" fill="none" stroke="#0f1419" stroke-width="2.4"/><path d="M22 16c2-4 4 0 4-4M30 14c2-4 4 0 4-4M38 16c2-4 4 0 4-4" stroke="#0a5e48" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span>
+          <h3>咖啡小店</h3><p>會員、回購、點數、訂閱、預約取餐 — 把忠誠客戶留下，不只賣杯子。</p><ul><li>訂閱方案</li><li>常客辨識</li><li>預約取餐</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="ai" class="section section--ai" data-reveal>
+      <div class="ai-grid">
+        <div class="ai-copy">
+          <p class="eyebrow"><i class="dot dot--jade"></i>AI 老闆助手</p>
+          <h2>不取代你的判斷，<br>幫你把 30 分鐘的對帳<span class="ink-amber">壓成 3 分鐘</span></h2>
+          <p class="lead">AI 在這套系統只負責三件事：摘要昨天、提示異常、給可核可的建議。所有自動化都要人工 <b>核可</b> 才送出。</p>
+          <ul class="ai-bullets">
+            <li><span>01</span><div><strong>每日營收摘要</strong><p>把今天的數字翻譯成一句話：增加多少、原因是什麼、要不要動作。</p></div></li>
+            <li><span>02</span><div><strong>異常事件提醒</strong><p>發票補傳逾時、列印失敗、同步死信、庫存低水位、現金差異 — 逐項列出。</p></div></li>
+            <li><span>03</span><div><strong>可核可的建議</strong><p>備料、補貨、改班、撤下熱賣完售品項。每一條都顯示來源資料與信心程度。</p></div></li>
+          </ul>
+          <a class="btn-ghost" href="/app.html">看 AI 老闆日報示範
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+        <article class="ai-card">
+          <header><span class="tag tag--ink">AI 摘要 · 2026-05-16</span><span class="tag tag--ok">信心：中</span></header>
+          <p class="ai-quote">「昨天總營收 NT$18,420，比上週同日多 9%。主因雞腿便當熱銷與 LINE 點單增加。建議今天備雞腿提早 20 分鐘。」</p>
+          <ul class="ai-events">
+            <li><i class="bullet bullet--jade"></i><span>三方對帳</span><b>100% 對齊</b></li>
+            <li><i class="bullet bullet--amber"></i><span>發票補傳</span><b>2 筆 sandbox</b></li>
+            <li><i class="bullet bullet--copper"></i><span>低水位</span><b>1 SKU 待補</b></li>
+            <li><i class="bullet bullet--ink"></i><span>列印失敗</span><b>0 件</b></li>
+          </ul>
+          <div class="ai-actions" aria-hidden="true">
+            <button type="button" tabindex="-1">核可備料建議</button>
+            <button type="button" tabindex="-1" class="ghost">看完整 audit</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="compare" class="section section--compare" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot"></i>Compare</p>
+        <h2>跟其他 POS 攤開比，<span class="ink-jade">差距在底座</span></h2>
+      </header>
+      <div class="compare-wrap">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th scope="col"><span class="th-label">能力</span></th>
+              <th scope="col"><span class="th-tag th-tag--cheap">通用低價 POS</span></th>
+              <th scope="col"><span class="th-tag th-tag--enterprise">傳統大型 POS</span></th>
+              <th scope="col"><span class="th-tag th-tag--us">店長 AI POS</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">離線收銀</th><td><span class="cell cell--part">部分</span></td><td><span class="cell cell--ok">完整</span></td><td><span class="cell cell--ok">完整 + 補傳</span></td></tr>
+            <tr><th scope="row">三方對帳（單 × 付 × 發）</th><td><span class="cell cell--no">無</span></td><td><span class="cell cell--part">手動</span></td><td><span class="cell cell--ok">自動 + audit</span></td></tr>
+            <tr><th scope="row">電子發票 sandbox + 補傳</th><td><span class="cell cell--no">無</span></td><td><span class="cell cell--ok">有</span></td><td><span class="cell cell--ok">含字軌 gate</span></td></tr>
+            <tr><th scope="row">角色 + PIN + audit log</th><td><span class="cell cell--part">基本</span></td><td><span class="cell cell--ok">有</span></td><td><span class="cell cell--ok">細粒度</span></td></tr>
+            <tr><th scope="row">同步補救佇列</th><td><span class="cell cell--no">無</span></td><td><span class="cell cell--part">人工</span></td><td><span class="cell cell--ok">內建</span></td></tr>
+            <tr><th scope="row">AI 摘要 + 異常提醒</th><td><span class="cell cell--no">無</span></td><td><span class="cell cell--no">無</span></td><td><span class="cell cell--ok">需人工核可</span></td></tr>
+            <tr><th scope="row">起步價</th><td><span class="cell cell--neutral">NT$199</span></td><td><span class="cell cell--neutral">NT$3,500</span></td><td><span class="cell cell--neutral">NT$399</span></td></tr>
+            <tr><th scope="row">遷移到連鎖時要不要換系統</th><td><span class="cell cell--no">要</span></td><td><span class="cell cell--ok">不用</span></td><td><span class="cell cell--ok">不用</span></td></tr>
+          </tbody>
+        </table>
+        <p class="compare-foot">資料來源：店長 AI POS 規格與市場主流低價/大型 POS 公開資訊整理（2026 Q1）。</p>
+      </div>
+    </section>
+
+    <section id="gallery" class="section section--gallery" data-reveal>
+      <header class="section-head">
+        <p class="eyebrow"><i class="dot dot--jade"></i>Gallery</p>
+        <h2>實際工作台長這樣，<span class="ink-jade">不是設計稿</span></h2>
+      </header>
+      <div class="gallery-grid">
+        <article class="gallery-card">
+          <div class="gallery-image" aria-label="POS 收銀畫面">
+            <svg viewBox="0 0 600 380" preserveAspectRatio="xMidYMid meet">
+              <rect width="600" height="380" rx="14" fill="#fffdf6"/>
+              <rect x="0" y="0" width="600" height="38" fill="#0f1419"/>
+              <rect x="16" y="11" width="80" height="16" rx="3" fill="#f4c47b"/>
+              <rect x="500" y="11" width="84" height="16" rx="8" fill="rgba(155,233,195,.3)" stroke="#9be9c3" stroke-width="1"/>
+              <rect x="16" y="56" width="118" height="306" rx="10" fill="#efece1"/>
+              <rect x="28" y="76" width="90" height="34" rx="6" fill="#0f1419"/>
+              <rect x="28" y="120" width="90" height="34" rx="6" fill="#fffdf6" stroke="#0f1419" stroke-width="1"/>
+              <rect x="28" y="164" width="90" height="34" rx="6" fill="#fffdf6" stroke="#d6dadc" stroke-width="1"/>
+              <rect x="28" y="208" width="90" height="34" rx="6" fill="#fffdf6" stroke="#d6dadc" stroke-width="1"/>
+              <rect x="28" y="316" width="90" height="38" rx="8" fill="#0a5e48"/>
+              <rect x="40" y="328" width="68" height="3" fill="#f4c47b"/>
+              <rect x="146" y="56" width="298" height="306" rx="10" fill="#fffdf6" stroke="#eaeae3" stroke-width="1"/>
+              <rect x="160" y="74" width="280" height="34" rx="6" fill="#fbfaf3" stroke="#d6dadc" stroke-width="1"/>
+              <rect x="160" y="124" width="84" height="84" rx="8" fill="#fffdf6" stroke="#d3eee0" stroke-width="1.5"/>
+              <rect x="248" y="124" width="84" height="84" rx="8" fill="#fffdf6" stroke="#d3eee0" stroke-width="1.5"/>
+              <rect x="336" y="124" width="84" height="84" rx="8" fill="#fffdf6" stroke="#d3eee0" stroke-width="1.5"/>
+              <text x="178" y="200" font-family="Noto Serif TC" font-size="14" font-weight="900" fill="#0f1419">招牌奶茶</text>
+              <text x="266" y="200" font-family="Noto Serif TC" font-size="14" font-weight="900" fill="#0f1419">蛋餅</text>
+              <text x="354" y="200" font-family="Noto Serif TC" font-size="14" font-weight="900" fill="#0f1419">飯糰</text>
+              <rect x="456" y="56" width="128" height="306" rx="10" fill="#fbf3e3"/>
+              <rect x="468" y="74" width="104" height="14" rx="2" fill="rgba(15,20,25,.4)"/>
+              <rect x="468" y="100" width="104" height="50" rx="6" fill="#fffdf6"/>
+              <rect x="468" y="158" width="104" height="50" rx="6" fill="#fffdf6"/>
+              <rect x="468" y="280" width="104" height="40" rx="6" fill="#0a5e48"/>
+              <text x="520" y="305" font-family="Inter" font-size="14" font-weight="900" fill="#fffdf6" text-anchor="middle">NT$95</text>
+            </svg>
+          </div>
+          <h3>POS 收銀</h3>
+          <p>左側分類 / 中間商品 / 右側單據，所有快選都在一個視窗。新人 10 分鐘上手。</p>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-image" aria-label="三方對帳畫面">
+            <svg viewBox="0 0 600 380" preserveAspectRatio="xMidYMid meet">
+              <rect width="600" height="380" rx="14" fill="#fffdf6"/>
+              <rect x="0" y="0" width="600" height="38" fill="#0f1419"/>
+              <rect x="16" y="11" width="80" height="16" rx="3" fill="#f4c47b"/>
+              <rect x="16" y="60" width="280" height="156" rx="10" fill="#fffdf6" stroke="#eaeae3"/>
+              <text x="32" y="84" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#b35324">FINANCE CONTROL</text>
+              <text x="32" y="106" font-family="Noto Serif TC" font-size="18" font-weight="900" fill="#0f1419">三方對帳</text>
+              <rect x="32" y="124" width="248" height="36" rx="6" fill="#d3eee0"/>
+              <text x="44" y="146" font-family="Inter" font-size="11" font-weight="800" fill="#0a5e48">訂單 = 付款 = 發票 NT$18,420</text>
+              <rect x="32" y="172" width="248" height="32" rx="6" fill="#fbe6c2"/>
+              <text x="44" y="192" font-family="Inter" font-size="11" font-weight="800" fill="#7a3210">2 筆發票待上傳</text>
+              <rect x="304" y="60" width="280" height="156" rx="10" fill="#0f1419"/>
+              <text x="320" y="84" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#f4c47b">AI BOSS BRIEF</text>
+              <text x="320" y="108" font-family="Noto Serif TC" font-size="16" font-weight="900" fill="#fffdf6">今日營收 +9%</text>
+              <text x="320" y="132" font-family="Inter" font-size="11" fill="rgba(255,253,246,.7)">主因雞腿便當熱銷與 LINE 點單成長。</text>
+              <rect x="320" y="148" width="248" height="44" rx="6" fill="rgba(244,196,123,.16)" stroke="rgba(244,196,123,.4)" stroke-dasharray="3 3"/>
+              <text x="332" y="174" font-family="Inter" font-size="11" font-weight="800" fill="#f4c47b">建議：明日 11:00 提早備雞腿 20 份</text>
+              <rect x="16" y="226" width="568" height="136" rx="10" fill="#fbfaf3" stroke="#d6dadc"/>
+              <text x="32" y="250" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#5b6470">SYNC REPAIR QUEUE</text>
+              <rect x="32" y="268" width="540" height="28" rx="4" fill="#fffdf6" stroke="#eaeae3"/>
+              <text x="44" y="287" font-family="JetBrains Mono" font-size="11" fill="#0f1419">order-0148  RETRYABLE_ERROR  重試 1 次</text>
+              <rect x="32" y="304" width="540" height="28" rx="4" fill="#fffdf6" stroke="#eaeae3"/>
+              <text x="44" y="323" font-family="JetBrains Mono" font-size="11" fill="#0f1419">invoice-0042  PENDING_UPLOAD  已重排</text>
+              <circle cx="62" cy="282" r="4" fill="#d97706"/>
+              <circle cx="62" cy="318" r="4" fill="#d97706"/>
+            </svg>
+          </div>
+          <h3>三方對帳 + AI 摘要</h3>
+          <p>訂單、付款、發票一行看到對齊狀態，AI 用文字告訴你今天值得注意的事。</p>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-image" aria-label="多店營運總覽畫面">
+            <svg viewBox="0 0 600 380" preserveAspectRatio="xMidYMid meet">
+              <rect width="600" height="380" rx="14" fill="#fffdf6"/>
+              <rect x="0" y="0" width="600" height="38" fill="#0f1419"/>
+              <rect x="16" y="11" width="80" height="16" rx="3" fill="#f4c47b"/>
+              <rect x="472" y="11" width="112" height="16" rx="8" fill="rgba(155,233,195,.3)" stroke="#9be9c3" stroke-width="1"/>
+              <rect x="16" y="58" width="164" height="304" rx="10" fill="#efece1"/>
+              <text x="34" y="86" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#5b6470">STORE STATUS</text>
+              <rect x="34" y="108" width="128" height="42" rx="8" fill="#0a5e48"/>
+              <text x="50" y="134" font-family="Noto Serif TC" font-size="16" font-weight="900" fill="#fffdf6">台北南門</text>
+              <rect x="34" y="162" width="128" height="42" rx="8" fill="#fffdf6" stroke="#d6dadc"/>
+              <text x="50" y="188" font-family="Noto Serif TC" font-size="16" font-weight="900" fill="#0f1419">板橋文化</text>
+              <rect x="34" y="216" width="128" height="42" rx="8" fill="#fffdf6" stroke="#d6dadc"/>
+              <text x="50" y="242" font-family="Noto Serif TC" font-size="16" font-weight="900" fill="#0f1419">新竹光復</text>
+              <rect x="34" y="284" width="128" height="48" rx="8" fill="#fbe6c2"/>
+              <text x="50" y="313" font-family="Inter" font-size="12" font-weight="900" fill="#7a3210">1 店需補傳確認</text>
+              <rect x="196" y="58" width="388" height="92" rx="10" fill="#fbfaf3" stroke="#d6dadc"/>
+              <text x="216" y="86" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#0f8a6a">TODAY SUMMARY</text>
+              <text x="216" y="118" font-family="Noto Serif TC" font-size="22" font-weight="900" fill="#0f1419">3 店營收 NT$86,420</text>
+              <text x="458" y="118" font-family="Inter" font-size="18" font-weight="900" fill="#0f8a6a">+12%</text>
+              <rect x="216" y="132" width="164" height="6" rx="3" fill="#d3eee0"/>
+              <rect x="216" y="132" width="118" height="6" rx="3" fill="#0f8a6a"/>
+              <rect x="196" y="166" width="186" height="196" rx="10" fill="#fffdf6" stroke="#eaeae3"/>
+              <text x="216" y="194" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#b35324">RUSH HOUR</text>
+              <rect x="216" y="218" width="28" height="96" rx="5" fill="#d3eee0"/>
+              <rect x="254" y="196" width="28" height="118" rx="5" fill="#0f8a6a"/>
+              <rect x="292" y="240" width="28" height="74" rx="5" fill="#f4c47b"/>
+              <rect x="330" y="228" width="28" height="86" rx="5" fill="#b35324"/>
+              <line x1="216" y1="326" x2="358" y2="326" stroke="#d6dadc" stroke-width="2"/>
+              <text x="216" y="348" font-family="Inter" font-size="11" font-weight="800" fill="#5b6470">午餐尖峰集中在 12:10-12:40</text>
+              <rect x="398" y="166" width="186" height="196" rx="10" fill="#0f1419"/>
+              <text x="418" y="194" font-family="Inter" font-size="10" letter-spacing="2" font-weight="900" fill="#f4c47b">MANAGER ACTIONS</text>
+              <rect x="418" y="216" width="146" height="34" rx="6" fill="rgba(244,196,123,.16)" stroke="rgba(244,196,123,.36)"/>
+              <text x="432" y="238" font-family="Inter" font-size="11" font-weight="800" fill="#f4c47b">確認發票補傳</text>
+              <rect x="418" y="262" width="146" height="34" rx="6" fill="rgba(211,238,224,.12)" stroke="rgba(155,233,195,.34)"/>
+              <text x="432" y="284" font-family="Inter" font-size="11" font-weight="800" fill="#9be9c3">調整明日備料</text>
+              <rect x="418" y="308" width="146" height="34" rx="6" fill="rgba(255,253,246,.08)" stroke="rgba(255,253,246,.18)"/>
+              <text x="432" y="330" font-family="Inter" font-size="11" font-weight="800" fill="#fffdf6">查看 audit log</text>
+            </svg>
+          </div>
+          <h3>多店營運總覽</h3>
+          <p>總部一眼看各店營收、尖峰、人工作業與補傳狀態，不用切三個後台。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section section--cta" data-reveal>
+      <div class="cta-card">
+        <div>
+          <p class="eyebrow"><i class="dot dot--amber"></i>Try It</p>
+          <h2>把功能變成可操作的工作台</h2>
+          <p class="lead">瀏覽器版本走完所有流程，含真實 QR、列印、CSV、掃碼、發票字軌。</p>
+        </div>
+        <div class="cta-actions">
+          <a class="btn-primary lg" href="/login.html">登入 / 註冊</a>
+          <a class="btn-ghost lg" href="/pricing.html">看價格與 FAQ</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 36" width="32" height="32"><rect x="3" y="8" width="30" height="22" rx="5" fill="#f7f5ee"/><rect x="8" y="13" width="20" height="12" rx="2" fill="#0f1419"/><rect x="10" y="16" width="9" height="2" rx="1" fill="#f4c47b"/><rect x="10" y="20" width="14" height="2" rx="1" fill="#f4c47b"/><circle cx="29" cy="11" r="4" fill="#0f8a6a"/></svg>
+        </span>
+        <div><strong>店長 AI POS</strong><p>小店付得起，連鎖也夠用的雲端 POS。離線優先，合規同行。</p></div>
+      </div>
+      <nav aria-label="產品連結"><h4>產品</h4><a href="/product.html#features">功能模組</a><a href="/product.html#workflow">店務流程</a><a href="/product.html#industries">適用店型</a><a href="/app.html">示範工作台</a></nav>
+      <nav aria-label="方案連結"><h4>方案</h4><a href="/pricing.html">價格方案</a><a href="/pricing.html#cases">案例數據</a><a href="/pricing.html#roadmap">路線圖</a><a href="/pricing.html#faq">常見問題</a></nav>
+      <nav aria-label="合規連結"><h4>合規</h4><a href="/terms.html">服務條款</a><a href="/privacy.html">隱私政策</a><a href="/product.html#compare">產品比較</a><a href="mailto:hello@storecaptain.local">聯絡 / 電郵</a></nav>
+    </div>
+    <div class="footer-bar"><span>&copy; 2026 Store Captain Cloud · 為外帶型小店設計</span><span>v0.9.2 · architecture: modular-domain-runtime</span></div>
+  </footer>
+
+  <script src="/lib/topbar.js" defer></script>
+  <script src="/site.js" defer></script>
+</body>
+</html>

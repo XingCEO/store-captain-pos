@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Reject commit messages that don't match Conventional Commits.
+# Activates once `npx husky init` runs in a git working tree.
+npx --no-install commitlint --edit "$1"

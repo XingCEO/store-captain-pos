@@ -1,0 +1,67 @@
+# Prometheus alerting rules for ulw-system.
+# Apply via `kubectl apply -f alerts.yml` (PrometheusRule CR) or load into
+# Alertmanager. Tune `for:` durations to the SLO budget you commit to.
+
+groups:
+  - name: ulw-system-availability
+    interval: 30s
+    rules:
+      - alert: UlwSystem5xxRateHigh
+        expr: |
+          sum(rate(ulw_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(ulw_http_requests_total[5m])) > 0.01
+        for: 5m
+        labels: { severity: critical, service: ulw-system }
+        annotations:
+          summary: '5xx rate > 1% for 5 min'
+          description: |
+            Sustained 5xx rate above the 1% SLO. Check pino error logs and
+            recent deploys.
+
+      - alert: UlwSystemOutboxBacklog
+        expr: ulw_outbox_pending_jobs > 100
+        for: 10m
+        labels: { severity: warning, service: ulw-system }
+        annotations:
+          summary: 'Outbox backlog > 100 jobs'
+          description: |
+            Outbox is not draining. Investigate syncWorker logs and DEAD_LETTER
+            counter. Likely DB lock contention or downstream unavailable.
+
+      - alert: UlwSystemDeadLetterGrowing
+        expr: increase(ulw_outbox_dead_letter_total[15m]) > 0
+        for: 1m
+        labels: { severity: warning, service: ulw-system }
+        annotations:
+          summary: 'New DEAD_LETTER outbox jobs in last 15 min'
+          description: |
+            Manual repair required. See docs/manual-repair-playbook.md.
+
+      - alert: UlwSystemDbQuerySlow
+        expr: |
+          histogram_quantile(0.99, sum(rate(ulw_db_query_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 10m
+        labels: { severity: warning, service: ulw-system }
+        annotations:
+          summary: 'DB query p99 > 500ms'
+          description: |
+            SQLite or Postgres queries are slow. Check disk IO and WAL size.
+
+      - alert: UlwSystemTelemetryUnreachable
+        expr: ulw_telemetry_unreachable_snapshots > 0
+        for: 5m
+        labels: { severity: warning, service: ulw-system }
+        annotations:
+          summary: 'At least one store telemetry unreachable'
+          description: |
+            Store device has not phoned home in > 5 min. Confirm network /
+            hardware before contacting merchant.
+
+      - alert: UlwSystemRateLimitSpike
+        expr: rate(ulw_rate_limit_rejects_total[5m]) > 1
+        for: 5m
+        labels: { severity: warning, service: ulw-system }
+        annotations:
+          summary: 'Rate limiter rejecting > 1 req/sec for 5 min'
+          description: |
+            Either abuse, or a misbehaving client. Inspect ip+route labels.
