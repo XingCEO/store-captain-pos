@@ -97,7 +97,7 @@
 - **偵測**：對帳日報 paymentSum > 0 but invoiceSum = 0；訂單已付款但 invoice lifecycle 為 null 或 ERROR。
 - **補救步驟**：
   1. SUPERVISOR 檢視訂單 (`GET /api/v1/orders/:id`)，確認 paymentState=PAID。
-  2. 呼叫 `POST /api/v1/invoices/issue-sandbox` 補開發票（demo 階段；上線後改用加值中心介接）。
+  2. 呼叫 `POST /api/v1/invoices/issue-sandbox` 補開發票（未接加值中心前；上線後改用加值中心介接）。
   3. 若發票開立成功，invoices record 應出現且 uploadState=PENDING_UPLOAD。
   4. 復查 reconciliation，AMOUNT_DRIFT 應解除。
 - **責任人**：SUPERVISOR。SLA：同一天內補開；逾期需報備稅務相關人員。

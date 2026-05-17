@@ -25,7 +25,7 @@ for the 9-field spec; this is the engineering counterpart.
 
 ## 高風險檢查 / High-risk checklist
 - [ ] No new PII handling without privacy review
-- [ ] No new payment / invoice handler without `x-environment: sandbox` marker
+- [ ] No payment / invoice handler mislabels its operating mode
 - [ ] No new endpoint without `tenant_id` scope
 - [ ] No new endpoint without `idempotencyKey` if it mutates money / inventory
 - [ ] No new audit-worthy action without `runtime.addAudit(...)`

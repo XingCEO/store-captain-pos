@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-本專案是「店長 AI POS」產品藍圖 + 可執行 PoC 的混合樹。根目錄與 `docs/` 是繁體中文可執行規格；`ulw-system/` 是唯一可跑的 Node.js POS demo。
+本專案是「店長 AI POS」產品藍圖 + 可執行系統的混合樹。根目錄與 `docs/` 是繁體中文可執行規格；`ulw-system/` 是唯一可跑的 Node.js POS 實作。
 
 ## STRUCTURE
 
@@ -14,7 +14,7 @@
 POSstudio/
 ├── README.md                  # 文件入口與產品定位
 ├── docs/                      # 產品、架構、合規、QA、補救與研究文件
-├── ulw-system/                # Node.js API + 靜態前端 PoC
+├── ulw-system/                # Node.js API + 靜態前端實作
 ├── .github/workflows/         # CI / CodeQL，實際進入 ulw-system 執行
 ├── qrcode-test.js             # 根目錄 QR ad hoc 測試腳本
 └── test-qr.cjs                # 根目錄 QR decode ad hoc 測試腳本
@@ -47,12 +47,13 @@ POSstudio/
 | `catalog.register` | domain | `ulw-system/src/domains/catalog.js` | products、SKUs、prices、imports |
 | `commerce.register` | domain | `ulw-system/src/domains/commerce.js` | orders、payments、refunds、voids、invoice creation helper |
 | `operations.register` | domain | `ulw-system/src/domains/operations.js` | order hub、KDS、cash drawer、inventory、channels |
-| `risk.register` | domain | `ulw-system/src/domains/risk.js` | invoices sandbox、reports、exports、telemetry、AI brief、sync jobs |
+| `risk.register` | domain | `ulw-system/src/domains/risk.js` | invoice workflows、reports、exports、telemetry、AI brief、sync jobs |
 | `scripts/smoke.js` | runtime QA | `ulw-system/scripts/smoke.js` | live-server smoke gate |
 
 ## CONVENTIONS
 
 - 主要文件用繁體中文；技術名詞可保留 `Offline-first`、`Outbox`、`Idempotency`、`Tenant`。
+- Agent 回覆預設最小化：先結論、少敘述、無寒暄；只列必要證據、驗證、下一步。
 - 對外文案要讓店家看懂，不只寫工程術語。
 - 文件是可執行規格，不是願景稿。每個功能要標示目的、使用者、風險、階段、驗收方式。
 - 市場價格、法規、第三方 API 必須註明來源與查證日期；不確定放「待確認」或「風險」。
@@ -86,7 +87,7 @@ Windows 啟動指定 port：`set PORT=4000 && npm start`。根目錄沒有 `pack
 
 ## NOTES
 
-- 這不是純 docs repo：`docs/` 是規格，`ulw-system/` 是 demo 實作，兩者要對齊但不可混用規則。
+- 這不是純 docs repo：`docs/` 是規格，`ulw-system/` 是可執行實作，兩者要對齊但不可混用規則。
 - `ulw-system/CLAUDE.md` 可能記錄過期命令；以 `ulw-system/package.json` 的 scripts 為準。
 - `.omc/`、`.omx/`、`.playwright-mcp/`、`.sisyphus/` 是工具/狀態目錄；不要把其內容當產品規格。
 - 文件型交付也要驗收：README 連結、範圍、不做項、go/no-go gate、待確認人與問題。

@@ -33,7 +33,7 @@
 
 - 會計師確認首版 B2C / B2B 範圍。
 - 加值中心確認支援 MIG 4.1 / Turnkey 3.2。
-- sandbox 完成開立、作廢、折讓、補傳測試。
+- 測試環境完成開立、作廢、折讓、補傳測試。
 - POS 離線補傳與去重設計通過。
 - 發票、訂單、付款金額可每日對帳。
 
@@ -75,7 +75,7 @@
 
 - PSP / acquirer / LINE Pay merchant approval 完成。
 - PCI scope 與 SAQ 類型確認。
-- sandbox 通過成功、失敗、取消、退款、重送、重複單號。
+- 測試環境通過成功、失敗、取消、退款、重送、重複單號。
 - 對帳可用 `orderId ↔ transactionId ↔ settlementId` 對起來。
 - log 已驗證不含敏感卡資料。
 

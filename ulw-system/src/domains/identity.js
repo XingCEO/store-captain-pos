@@ -206,8 +206,9 @@ function register(router, runtime) {
       runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'page/pageSize invalid'));
       return;
     }
-    // Strict tenant scope enforced inside queryAuditLogs (WHERE tenant_id = ?).
-    const { items, total } = runtime.queryAuditLogs({ tenantId: ctx.tenantId, action, resourceType, page, pageSize });
+    // Strict tenant scope enforced inside queryAuditLogs (WHERE tenant_id = ?
+    // for SQLite, RLS policy for Postgres when AUDIT_BACKEND=pg).
+    const { items, total } = await runtime.queryAuditLogs({ tenantId: ctx.tenantId, action, resourceType, page, pageSize });
     runtime.json(res, 200, { items, page, pageSize, total });
   });
 

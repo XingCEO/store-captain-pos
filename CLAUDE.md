@@ -9,7 +9,7 @@ This repo is **two things in one tree**, not one app with docs around it:
 1. **`docs/` + root `*.md`** — the product blueprint for "店長 AI POS" (Store Captain POS). All product, market, compliance, risk, architecture, and roadmap thinking lives here as Traditional-Chinese specs. These are *executable specs*, not vision deck — every ticket must carry the 9 fields from `docs/ai-engineering-rules.md` (背景/目標/不做範圍/資料表-API-畫面/狀態與錯誤/權限與租戶隔離/稽核與監控/測試案例/手動 QA/上線-回滾/待確認事項).
 2. **`ulw-system/`** — the only running code. A single Node.js process serving REST API + multi-page static site out of `public/`. **Has its own `CLAUDE.md`** at `ulw-system/CLAUDE.md` with backend layering, store/persist hazards, Service Worker outbox rules, SW version bump rule, QR encoder invariant, hover-style traps, etc. Read that file before touching anything under `ulw-system/`.
 
-`docs/` and `ulw-system/` evolve together but obey different rules: docs are spec-and-risk artifacts; `ulw-system/` is a deliberately small demo implementation that is allowed to lag the spec, but must not contradict the high-risk constraints (offline, idempotency, tenant scope, audit).
+`docs/` and `ulw-system/` evolve together but obey different rules: docs are spec-and-risk artifacts; `ulw-system/` is the runnable implementation and may lag the full spec, but must not contradict the high-risk constraints (offline, idempotency, tenant scope, audit).
 
 ## Where to start for any task
 
@@ -37,21 +37,22 @@ These come from `AGENTS.md` + `docs/ai-engineering-rules.md` and apply to **ever
 - **No "future optimization" for high-risk items.** 電子發票, 支付, 個資, 多租戶隔離, 資安, 資料一致性 must be in the first design — not bolted on later.
 - **Every delivery needs an acceptance test.** Deliveries without an acceptance method count as not done.
 - **For every API ticket**: at least one bad-input case, one retry/conflict case, one permission-deny case — happy-path-only is rejected.
-- **High-risk workstream gates**: `E-INVOICE`, 正式金流, AI 自動決策, 連鎖總部, 複雜進銷存, Benchmark — **none of these may be started** until the corresponding go-gates in `docs/high-risk-workstreams.md` clear. The demo in `ulw-system/` carries placeholders/PoC stubs for some of these; do not promote a stub past its gate.
+- **High-risk workstream gates**: `E-INVOICE`, 正式金流, AI 自動決策, 連鎖總部, 複雜進銷存, Benchmark — production enablement requires the corresponding go-gates in `docs/high-risk-workstreams.md`. Non-production scaffolding must label its actual mode; formal implementations must not be forced into non-production labels after gate clearance.
+- **Agent output**: default to minimal replies. Lead with conclusion, keep evidence/verification/next step only, no pleasantries.
 
 ## Current implementation snapshot (as of 2026-05)
 
 The blueprint targets a 0-to-12-month rollout (see `docs/roadmap.md`). What actually exists today:
 
-- **`ulw-system/`** is a Sprint-0/Sprint-1-shaped demo of the MVP surface: identity (login/sessions/roles), catalog (products/SKUs/modifiers), commerce (orders/payment/void/refund + idempotency + cash drawer), operations (order-hub, print jobs, telemetry, report exports), and stub-level risk (invoice/inventory/AI insights) domains. All persisted to a single `data/store.json` snapshot — no real DB, no real auth provider, no real payment gateway, no real invoice 加值中心 wired.
-- **Background workers** (outbox sync ticker + telemetry staleness daemon) now run in-process; print job retry has exponential backoff + DEAD_LETTER; invoice sandbox endpoints carry `x-environment: sandbox` header.
+- **`ulw-system/`** is the runnable MVP implementation surface: identity (login/sessions/roles), catalog (products/SKUs/modifiers), commerce (orders/payment/void/refund + idempotency + cash drawer), operations (order-hub, print jobs, telemetry, report exports), and risk (invoice/inventory/AI insights) domains. It uses local SQLite snapshot persistence; real auth provider, payment gateway, and invoice 加值中心 remain gated integrations.
+- **Background workers** (outbox sync ticker + telemetry staleness daemon) now run in-process; print job retry has exponential backoff + DEAD_LETTER; mode markers must match the active integration state.
 - **Frontend**: 8 static HTML pages under `ulw-system/public/` (marketing + login + POS workstation + customer QR + legal). The POS workstation (`app.html`) has the 5-zone (POS/HUB/RISK/OPS/LIVE) layout. Service Worker (`public/sw.js`) implements offline shell + IndexedDB outbox.
-- **Not yet built / explicitly out of scope for the current demo**: real 電子發票 上線, real 刷卡/QR 金流, KDS hardware, multi-store 總部 control, AI 自動決策, 完整進銷存, anonymous benchmark, ERP/會計/外送平台 webhooks. These are tracked in `docs/roadmap.md` months 4-12 and gated by `docs/high-risk-workstreams.md`.
-- **Marketing pricing page** now clearly labels the build as `MVP demo 階段` — earlier 42% stepper has been removed to align engineering and marketing copy.
+- **Not yet production-enabled**: real 電子發票 上線, real 刷卡/QR 金流, KDS hardware, multi-store 總部 control, AI 自動決策, 完整進銷存, anonymous benchmark, ERP/會計/外送平台 webhooks. These are tracked in `docs/roadmap.md` months 4-12 and gated by `docs/high-risk-workstreams.md`.
+- **Marketing pricing page** must reflect current capability without forcing a non-production label.
 
-## Running the demo
+## Running the app
 
-All commands run from `ulw-system/`. There is no build, lint, test, or watch script.
+All commands run from `ulw-system/`. There is no root-level app script; use `ulw-system/package.json` for start, lint, test, smoke, and DB helpers.
 
 ```
 cd ulw-system
@@ -59,7 +60,7 @@ npm start                       # node src/server.js, default PORT 3100
 curl http://localhost:3100/health
 ```
 
-Windows: `set PORT=4000 && npm start`. POSIX: `PORT=4000 npm start`. The process writes its PID to `ulw-system/.server-pid.txt` when launched by tooling — kill that PID before relaunching a stale run. Delete `ulw-system/data/store.json` to fully reset (re-seeded by `ensureTenantDefaults()` on next authenticated request).
+Windows: `set PORT=4000 && npm start`. POSIX: `PORT=4000 npm start`. The process writes its PID to `ulw-system/.server-pid.txt` when launched by tooling — kill that PID before relaunching a stale run. Delete `ulw-system/data/store.db*` to fully reset (re-seeded by `ensureTenantDefaults()` on next authenticated request).
 
 Quick regression (per `ulw-system/AGENTS.md`):
 

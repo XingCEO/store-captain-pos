@@ -26,7 +26,7 @@ src/
 | Catalog | `domains/catalog.js` | products, SKUs, price batch, import |
 | Orders / payments | `domains/commerce.js` | idempotent order create, pay, refund, void |
 | Operations | `domains/operations.js` | order hub, KDS, cash drawer, inventory |
-| Risk / reporting | `domains/risk.js` | invoice sandbox, reports, exports, telemetry, sync jobs |
+| Risk / reporting | `domains/risk.js` | invoice workflows, reports, exports, telemetry, sync jobs |
 | Background work | `core/syncWorker.js`, `workers/syncWorker.js` | draft expiry, telemetry stale, outbox jobs |
 
 ## CONVENTIONS
@@ -38,7 +38,7 @@ src/
 - Role checks use numeric `roleRank`; never compare role strings for authorization.
 - Every route accepting `storeId` must call `requireStoreScope`.
 - New mutation route must define errorCode, tenant scope, role gate, audit row, and idempotency if replayable.
-- Invoice / payment / AI / HQ / inventory / benchmark formal routes require go/no-go gate; before that, only sandbox/PoC with explicit marker.
+- Invoice / payment / AI / HQ / inventory / benchmark formal routes require go/no-go gate before production use; non-formal routes must mark their actual mode, but do not force formal work into non-production labels.
 
 ## ANTI-PATTERNS
 
@@ -46,7 +46,7 @@ src/
 - No mutation without audit when money, inventory, invoice, role, export, discount, refund, void, drawer, or settings change.
 - No raw card data in request, DB, log, analytics, fixtures, or tests.
 - No direct `stockOnHand` adjustment without ledger movement.
-- No invoice sandbox route without `environment: 'sandbox'` and `x-environment: sandbox`.
+- If an invoice route is non-production, it must return accurate mode fields; formal integrations must not keep old markers after gate clearance.
 - No `await fetch` or external I/O inside persistence-critical transaction shapes.
 - No new persisted collection without adding it to `persistedMaps` and tests.
 

@@ -54,9 +54,9 @@
 | POST /api/v1/inventory/counts | ✅ | ✅ STOCK_COUNT_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 盤點 + 批量調整 |
 | POST /api/v1/inventory/transfers | ✅ | ✅ TRANSFER_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 商店間轉移 |
 | GET /api/v1/invoices/health | ✅ | n/a | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 發票狀態檢查 |
-| POST /api/v1/invoices/issue-sandbox | ✅ | ✅ INVOICE_ORDER_NOT_READY | n/a | ✅ PERMISSION_DENIED (MANAGER+) | Sandbox 發票簽發 |
+| POST /api/v1/invoices/issue-sandbox | ✅ | ✅ INVOICE_ORDER_NOT_READY | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 測試環境發票簽發 |
 | POST /api/v1/invoices/:id/mark-uploaded | ✅ | n/a | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 標記已上傳 |
-| POST /api/v1/invoices/:id/void-sandbox | ✅ | ✅ INVOICE_VOID_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | Sandbox 發票作廢 |
+| POST /api/v1/invoices/:id/void-sandbox | ✅ | ✅ INVOICE_VOID_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 測試環境發票作廢 |
 | GET /api/v1/reconciliation/daily | ✅ | ✅ DATE_RANGE_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 日對帳 + 多商店彙總 |
 | GET /api/v1/reports/daily | ✅ | ✅ DATE_RANGE_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 日報告 + 支付細項 |
 | GET /api/v1/reports/payment-breakdown | ✅ | ✅ DATE_RANGE_INVALID | n/a | ✅ PERMISSION_DENIED (MANAGER+) | 支付分析 |

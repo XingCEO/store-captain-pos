@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`ulw-system` — "店長 AI POS" (Store Captain POS). Traditional-Chinese POS demo + marketing site. Single Node.js process serving REST API + static frontend out of `public/`. No build step, no test suite, no lint config — runs straight from source.
+`ulw-system` — "店長 AI POS" (Store Captain POS). Traditional-Chinese POS app + marketing site. Single Node.js process serving REST API + static frontend out of `public/`.
 
 ## Commands
 
@@ -14,9 +14,9 @@ PORT=4000 npm start             # override port
 curl http://localhost:3100/health
 ```
 
-There is **no** build, lint, test, or watch script. Edits to `src/**` or `public/**` are picked up by restarting the process. The server PID is written to `.server-pid.txt` when started via tooling — kill that PID to stop a stale run before relaunching.
+There is no build step. Use `package.json` scripts for lint, test, smoke, and DB helpers. Edits to `src/**` or `public/**` are picked up by restarting the process. The server PID is written to `.server-pid.txt` when started via tooling — kill that PID to stop a stale run before relaunching.
 
-State persists to `data/store.json` (JSON snapshot, atomic temp+rename). Delete this file to reset all tenants, users, orders, inventory, invoices, sessions back to defaults — `ensureTenantDefaults()` will reseed on next authenticated request.
+State persists to `data/store.db` via SQLite snapshot tables plus `audit_logs`. Delete the DB files to reset tenants, users, orders, inventory, invoices, sessions back to defaults — `ensureTenantDefaults()` will reseed on next authenticated request.
 
 ## Architecture
 
@@ -65,11 +65,11 @@ In-memory Map-per-collection, persisted as JSON. Every mutating request triggers
 
 | Path | Purpose |
 |------|---------|
-| `index.html` | Marketing landing — hero, 3 pillar cards linking to product/pricing/demo, trimmed pain teaser, CTA. Top nav: 首頁 / 產品功能 / 方案 / 示範工作台 + 登入/註冊. |
+| `index.html` | Marketing landing — hero, 3 pillar cards linking to product/pricing/workstation, trimmed pain teaser, CTA. Top nav: 首頁 / 產品功能 / 方案 / 工作台 + 登入/註冊. |
 | `product.html` | Feature deep-dive — anchor nav + 5 grouped zones (POS / HUB / RISK / OPS / LIVE), pain×7, workflow, industries, compare table. |
 | `pricing.html` | 3 plans + cases + 4 trust + horizontal roadmap stepper (42% progress) + exclusive-accordion FAQ + contact CTA. |
 | `login.html` | Pure login/register with `height: 100vh; overflow: hidden`. Tab switch + OAuth buttons. Submit redirects to `/app.html`. |
-| `app.html` | Pure demo workstation. Auth-gate has 3 store profiles (晨光早餐店 CASHIER/MANAGER, 阿福便當 SUPERVISOR). Five views: POS / HUB / RISK / OPS / LIVE. |
+| `app.html` | POS workstation. Auth-gate has 3 store profiles (晨光早餐店 CASHIER/MANAGER, 阿福便當 SUPERVISOR). Five views: POS / HUB / RISK / OPS / LIVE. |
 | `o.html` | Customer-facing QR landing page, reads URL hash params. |
 | `terms.html`, `privacy.html` | 10-section legal pages with `.legal-card` styling. |
 
@@ -102,12 +102,12 @@ The marketing CSS has a global `button:hover { background: #1f2730 }`. POS produ
 ```
 The `.app-frame[hidden]` rule uses `display: none !important` because `display: grid` would otherwise win over the `hidden` attribute. Keep both `!important` overrides if you touch hover/visibility styles.
 
-## Background workers + sandbox marking
+## Background workers + mode marking
 
 - `src/core/syncWorker.js` runs an in-process outbox tick (10s default) and telemetry staleness tick (30s default). It transitions stuck outbox jobs to `DEAD_LETTER` after 6 attempts and audits the transition. Disable with env `DISABLE_BACKGROUND_WORKERS=1` when running smoke tests or scripted reproductions.
-- All invoice routes under `/api/v1/invoices/*` are **sandbox-only**. Responses carry `x-environment: sandbox` header and `environment: 'sandbox'` field. Frontend RISK zone renders a 沙盒模式 banner whenever it sees this. Do not remove either marker until a real 加值中心 / Turnkey adapter ships and the corresponding go-gate in `docs/high-risk-workstreams.md` clears.
+- Current invoice routes under `/api/v1/invoices/*` are non-production until a real 加值中心 / Turnkey adapter ships. Responses must mark the actual mode; do not force old markers after the corresponding go-gate clears.
 - Print job retries use exponential backoff capped at 30 min; after 6 attempts the job transitions to `DEAD_LETTER` with audit row `PRINT_JOB_RETRY`.
-- Smoke test: `node scripts/smoke.js` against a running server hits health → login → order create → idempotent replay → pay → void. Must remain 6/6 PASS.
+- Smoke test: `node scripts/smoke.js` against a running server hits health → login → order create → idempotent replay → pay → void → invoice health. Must remain green.
 
 ## Common pitfalls
 

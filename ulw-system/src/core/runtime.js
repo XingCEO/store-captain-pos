@@ -10,6 +10,7 @@ const {
 const { logger } = require('./logger');
 const metrics = require('./metrics');
 const rateLimit = require('./rateLimit');
+const auditPg = require('./auditPg');
 
 const roleRank = {
   GUEST: 0,
@@ -136,6 +137,9 @@ class Store {
     if (!this.data.auditLogs.length) return 0;
     const rows = this.data.auditLogs;
     this.data.auditLogs = [];
+    // Always write to SQLite (canonical local store). When AUDIT_BACKEND=pg
+    // also mirror to Postgres so audit-logs queries can be served from PG
+    // with RLS enforced — see auditPg.queryAuditLogs.
     const tx = this.db.transaction(() => {
       for (const row of rows) {
         appendAuditLog(this.db, row);
@@ -143,6 +147,15 @@ class Store {
       }
     });
     tx();
+    if (auditPg.isEnabled()) {
+      // Tracked fire-and-forget — PG mirror is best-effort; SQLite remains
+      // source of truth. close()/drain() await outstanding writes.
+      auditPg.track(
+        auditPg.appendAuditLogs(rows).catch((err) => {
+          logger.error({ err: err.message, count: rows.length }, 'audit pg mirror failed');
+        })
+      );
+    }
     return rows.length;
   }
 
@@ -173,14 +186,25 @@ class Store {
     }
   }
 
-  queryAuditLogs(params) {
+  async queryAuditLogs(params) {
     // Flush any pending writes so reads-after-writes are consistent.
     this.flushAuditBuffer();
+    if (auditPg.isEnabled()) {
+      await auditPg.drain();
+      // PG path: RLS-enforced via `SET LOCAL app.tenant_id` inside the tx.
+      // Falls back to SQLite if the pool errors mid-query.
+      try {
+        return await auditPg.queryAuditLogs(params);
+      } catch (err) {
+        logger.warn({ err: err.message }, 'audit pg query failed; falling back to sqlite');
+      }
+    }
     return queryAuditLogs(this.db, params);
   }
 
-  close() {
+  async close() {
     closeDatabase(this.db);
+    await auditPg.close();
   }
 }
 
@@ -431,6 +455,7 @@ function createRuntime({ dataDir, publicDir }) {
     ensureTenantDefaults,
     pruneExpiredSessions,
     queryAuditLogs: (params) => store.queryAuditLogs(params),
+    auditPg,
   };
 }
 

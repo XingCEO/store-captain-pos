@@ -16,6 +16,7 @@
 ## 先決規範（必讀）
 
 - 主要文件仍用繁體中文。
+- Agent 回覆預設最小化：先結論、少敘述、無寒暄；只列必要證據、驗證、下一步。
 - 技術名詞可保留英文。
 - 命名/訊息一致採 `snake_case` JSON 欄位、`camelCase` JS 變數。
 - 每次 AI、工程、顧問或代理人進場前，必先讀 `docs/ai-engineering-rules.md`，並在本次變更區段註明「已讀」。
@@ -113,6 +114,6 @@
 ## 加碼驗收（waves 1-2 之後）
 
 1. 任何新增 mutation route 必須具備：tenant scope、numeric role rank、`addAudit`、`errorCode` 命名一致（見 `docs/error-codes.md`）、若可重送則含 idempotencyKey。
-2. 任何新增 sandbox / PoC stub endpoint 必須回傳 `environment: 'sandbox'` 並設 header `x-environment: sandbox`，前端對應顯示 banner。
-3. 改動完成後執行 `node scripts/smoke.js`，必須 6/6 PASS。
-4. 高風險路徑（發票、金流、AI 自動決策、總部、進階庫存、Benchmark）go-gate 未開不得新增正式版本路由；只能新增 sandbox 版且依本檔規則標記。
+2. 若 endpoint 仍是非正式 stub，必須回傳對應 mode 標記；正式整合通過 go-gate 後不得強制保留非正式標記。
+3. 改動完成後執行 `node scripts/smoke.js`，必須全數 PASS。
+4. 高風險路徑（發票、金流、AI 自動決策、總部、進階庫存、Benchmark）啟用正式版本前必須通過 go-gate；文件與 UI 標記必須反映真實狀態，不得強制非正式化。

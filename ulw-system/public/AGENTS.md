@@ -26,7 +26,7 @@ public/
 | Customer QR order | `o.html`, `lib/qrcode.js` | QR encoder invariant matters |
 | Offline behavior | `sw.js` | shell cache + IndexedDB mutation outbox |
 | Shared nav/topbar | `lib/topbar.js` | affects public pages |
-| Legal pages | `terms.html`, `privacy.html` | demo/sandbox claims must stay honest |
+| Legal pages | `terms.html`, `privacy.html` | status claims must stay honest |
 
 ## CONVENTIONS
 
@@ -36,7 +36,7 @@ public/
 - Print window must open synchronously inside the click handler before awaited data.
 - QR encoder format-info placement is critical: bits 0-5 go along column 8 rows 0-5 (`matrix[k][8]`).
 - Customer-facing copy must say what the店家 can do, not only internal architecture.
-- Demo/sandbox UI markers must remain until real go-gate clears.
+- UI mode markers must match backend reality; do not force non-production markers after real go-gate clears.
 
 ## ANTI-PATTERNS
 
@@ -44,7 +44,7 @@ public/
 - Do not remove `.app-frame[hidden] { display: none !important }` visibility protection.
 - Do not remove product-card hover `!important` overrides without checking global `button:hover` side effects.
 - Do not weaken SW origin checks, IndexedDB outbox retry limits, or auth-expired handling.
-- Do not present sandbox invoice/payment/AI output as production-ready.
+- Do not present non-production invoice/payment/AI output as production-ready.
 - Do not put secrets, tenant tokens, or raw card data into static JS fixtures.
 
 ## ACCEPTANCE

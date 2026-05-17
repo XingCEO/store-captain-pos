@@ -50,7 +50,7 @@
 ## 3. 電子發票加值中心確認清單
 
 - 是否完整支援 MIG 4.1 / Turnkey 3.2？
-- 是否提供 sandbox？
+- 是否提供測試環境？
 - 是否支援 API 開立、作廢、折讓、退貨、補印？
 - 是否支援 B2C、B2B、載具、捐贈碼、統編？
 - 是否支援離線補傳與 idempotency？
@@ -66,7 +66,7 @@
 - 誰收單、誰清算、誰負責 chargeback？
 - 我們是否接觸任何 raw card data？
 - 我們適用 SAQ A、SAQ A-EP，還是更高範圍？
-- 是否提供 sandbox？
+- 是否提供測試環境？
 - 是否支援 auth、capture、void、refund、partial refund？
 - 是否支援 duplicate `orderId` 防重？
 - timeout / duplicate callback / unknown status 怎麼查？

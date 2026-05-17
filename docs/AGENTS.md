@@ -32,7 +32,8 @@
 - 工程設計最少要寫：API contract、schema、error codes、DB/indexes、idempotency、tenant scope、permission、audit、retry/dead-letter、observability、rollback、manual repair。
 - 外部事實（價格、法規、API 能力、SLA）要附來源與查證日期。
 - 不確定事項用「待確認」格式：問題、確認人、確認來源、未確認前禁止、影響文件/功能。
-- 對外文案不可過度承諾；demo、sandbox、PoC 必須明示。
+- 對外文案不可過度承諾；實作狀態需依事實標示，不得強制降級成非正式狀態。
+- Agent 回覆預設最小化：先結論、少敘述、無寒暄；只列必要證據、驗收、阻塞。
 
 ## ANTI-PATTERNS
 

@@ -1,6 +1,6 @@
 # 基礎建設待辦 (2026-05)
 
-本次 strict 審查列出 50 條技術缺口。可在 demo 環境（無外部基礎設施）內完整實作的已落地，下列為**需基礎設施或第三方帳號才能完成**的項目，依優先順序排列。每條附「為何延後」、「先決條件」、「驗收標準」。
+本次 strict 審查列出 50 條技術缺口。可在本機 / 無外部基礎設施環境內完整實作的已落地，下列為**需基礎設施或第三方帳號才能完成**的項目，依優先順序排列。每條附「為何延後」、「先決條件」、「驗收標準」。
 
 ---
 
@@ -33,14 +33,24 @@
 ## P1 — 規模化前完成
 
 ### #11 Postgres + RLS 實際部署
-- **為何延後**：本機無 docker/psql。schema 已寫 (`src/db/schema.pg.js`)、RLS SQL 已寫 (`migrations/0001_rls.sql`)，未跑。
-- **先決條件**：managed Postgres (Cloud SQL / RDS / Supabase) 或自架 docker-compose。
-- **落地**：
-  1. `drizzle-kit generate` 產正式 SQL migration。
-  2. 套用 `0001_rls.sql`。
-  3. 寫 pg-adapter Store 介面，與 SQLite Store 共用同一抽象。
-  4. 每個 request 在 transaction 內 `SET LOCAL app.tenant_id = ...`。
-- **驗收**：tenant A token 觸發 DB query 物理上看不到 tenant B 的 row（SQL 層拒絕）。
+- **狀態 (2026-05-17)**：**Local PG up + 13 表 + RLS 全部驗證通過**。`embedded-postgres` npm 提供 PG 17 binary，無 docker / 無 admin。
+- **已完成**：
+  1. `embedded-postgres` 安裝 + `npm run pg:up` (port 5433) ✅
+  2. `npm run db:generate` 產出 `migrations/0000_*.sql`（13 表、6 indexes）✅
+  3. `npm run pg:apply` 套 schema + `0001_rls.sql` ✅
+  4. **`tests/postgresRls.test.js` 3 條驗證**（skip 當 `PG_URL` unset）：
+     - tenant context = A → 只見 A row
+     - tenant context = B → 只見 B row
+     - 無 context → 0 row (FORCE RLS)
+     - cross-tenant insert → `42501 row-level security policy` 拒絕
+  5. `PG_URL=... npm test` → 64/64 PASS ✅
+- **未做**：
+  6. 寫 pg-adapter Store 介面，與 SQLite Store 共用同一抽象（domain code 改 async）。
+  7. 每 request 在 transaction 內 `SET LOCAL app.tenant_id = ...`。
+  8. Connection pool sizing + leak detector。
+  9. CI service container 啟動 PG 跑此 test。
+- **驗收 (已達)**：tenant A token 觸發 DB query 物理上看不到 tenant B 的 row — SQL 層 (`42501`) 拒絕。
+- **下一步**：管 PG 從 dev 移到 staging (managed instance / docker)、寫 pgStore adapter、用 feature flag `STORE_BACKEND=postgres|sqlite` 切換。
 
 ### #21 OpenTelemetry tracing
 - **為何延後**：需要 OTLP collector (Tempo/Jaeger) 接收端。
@@ -94,7 +104,7 @@
 
 ## 不在此次 audit 但建議跟做
 
-- **#5 完成後**：把 demo banner 從 marketing page 移除前先過 P0 全套 + P1 #11/#23。
+- **#5 完成後**：移除試用 / 狀態 banner 前先過 P0 全套 + P1 #11/#23。
 - **#7 + #11**：完成後可開始 GDPR / 個資法 DPIA 文件。
 - **#21 + #25 + #27**：合一規劃成 observability stack，建議用 Grafana Cloud 一站 (Prom + Loki + Tempo) 或自架 Tanka。
 - **#29**：load test 結果一旦得到，回頭調 SQLite/Postgres、connection pool size、persist coalescing window。
