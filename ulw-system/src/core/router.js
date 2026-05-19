@@ -47,6 +47,11 @@ function createRouter(runtime) {
       checks.worker = { lastTickAt: lastTickIso, ageSeconds: tickAgeSeconds };
       const queryMs = Number(process.hrtime.bigint() - startTs) / 1e6;
       const ok = checks.sqlite.ok && (!readyMode || (tickAgeSeconds === null || tickAgeSeconds < 600));
+      // Demo profile gate: the POS auth gate ships 3 hardcoded "店主 / 收銀員"
+      // shortcut buttons in app.html with cleartext PINs. They must NOT render
+      // in production. The flag below drives that hide/show decision client-side.
+      const demoProfilesEnabled = process.env.NODE_ENV !== 'production'
+        || process.env.OMC_DEMO_PROFILES === '1';
       const payload = liveOnly
         ? { ok: true, time: runtime.nowIso() }
         : {
@@ -58,6 +63,7 @@ function createRouter(runtime) {
           memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
           checks,
           queryMs: Math.round(queryMs * 100) / 100,
+          demoProfilesEnabled,
         };
       runtime.json(res, ok ? 200 : 503, payload);
       return;

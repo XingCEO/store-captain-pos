@@ -269,7 +269,9 @@ function register(router, runtime) {
     const openingCash = Number(body.expectedOpeningCash || 0);
     if (!Number.isFinite(openingCash) || openingCash < 0) { runtime.json(res, 400, runtime.error('CASH_SHORTFALL_UNEXPLAINED', 'opening cash invalid')); return; }
     const id = store.nextId('cashDrawer');
-    const drawer = { id, tenantId: ctx.tenantId, storeId, terminalId, state: 'OPEN', openingCash, openedBy: body.openedBy || ctx.userId, openedAt: runtime.nowIso(), note: body.note || null, movements: [] };
+    // openedBy is server-derived from the session — a SUPERVISOR cannot
+    // attribute the open to another user via body override.
+    const drawer = { id, tenantId: ctx.tenantId, storeId, terminalId, state: 'OPEN', openingCash, openedBy: ctx.userId, openedAt: runtime.nowIso(), note: body.note || null, movements: [] };
     store.data.cashDrawers.set(id, drawer);
     runtime.addAudit(ctx, 'CASH_DRAWER_OPENED', 'CASH_DRAWER', id, null, { id, storeId, terminalId, openingCash, openedBy: drawer.openedBy, openedAt: drawer.openedAt });
     runtime.json(res, 200, { cashDrawerId: id, state: drawer.state, openedAt: drawer.openedAt });
@@ -308,7 +310,8 @@ function register(router, runtime) {
       return;
     }
     const beforeSnap = { id: drawer.id, state: drawer.state, openingCash: drawer.openingCash, openedAt: drawer.openedAt };
-    const next = { ...drawer, state: 'CLOSED', closingCash, countedBy: body.countedBy || ctx.userId, adjustments, variance, closedAt: runtime.nowIso() };
+    // countedBy is server-derived from the session for the same reason.
+    const next = { ...drawer, state: 'CLOSED', closingCash, countedBy: ctx.userId, adjustments, variance, closedAt: runtime.nowIso() };
     store.data.cashDrawers.set(drawer.id, next);
     runtime.addAudit(ctx, 'CASH_DRAWER_CLOSED', 'CASH_DRAWER', drawer.id, beforeSnap, { id: next.id, state: next.state, closingCash: next.closingCash, variance: next.variance, closedAt: next.closedAt, countedBy: next.countedBy });
     runtime.json(res, 200, { cashDrawerId: drawer.id, state: next.state, cashVariance: variance, auditId: `${drawer.id}:close`, reportUrl: `/api/v1/cash-drawers/${drawer.id}/report` });

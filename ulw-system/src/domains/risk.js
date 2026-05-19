@@ -591,12 +591,39 @@ function register(router, runtime) {
     const customer = store.data.customers.get(body.customerId);
     const points = Number(body.points);
     if (!customer || customer.tenantId !== ctx.tenantId || !Number.isInteger(points) || points === 0 || !['EARN', 'REDEEM', 'ADJUST'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('POINTS_INVALID', 'customerId, integer points, reasonCode required')); return; }
+    // Anti-fraud bounds: a rogue MANAGER could otherwise drain revenue by
+    // self-redeeming arbitrary points. Per-call cap caps a single mistake;
+    // per-customer-per-day cap prevents a slow drip across many calls.
+    const PER_CALL_LIMIT = 1000;
+    const PER_DAY_LIMIT = 5000;
+    const HIGH_VALUE_THRESHOLD = 500;
+    if (Math.abs(points) > PER_CALL_LIMIT) {
+      runtime.json(res, 400, runtime.error('POINTS_INVALID', `single adjust exceeds per-call cap of ${PER_CALL_LIMIT}`));
+      return;
+    }
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const dayStartIso = dayStart.toISOString();
+    let dayTotalAbs = 0;
+    for (const entry of store.data.customerPoints.values()) {
+      if (entry.tenantId !== ctx.tenantId) continue;
+      if (entry.customerId !== customer.id) continue;
+      if (!entry.createdAt || entry.createdAt < dayStartIso) continue;
+      dayTotalAbs += Math.abs(Number(entry.points || 0));
+    }
+    if (dayTotalAbs + Math.abs(points) > PER_DAY_LIMIT) {
+      runtime.json(res, 409, runtime.error('POINTS_INVALID', `per-customer-per-day cap of ${PER_DAY_LIMIT} would be exceeded`));
+      return;
+    }
     const id = store.nextId('point');
     const nextPoints = Math.max(0, Number(customer.points || 0) + points);
     const nextCustomer = { ...customer, points: nextPoints, updatedAt: runtime.nowIso() };
     store.data.customers.set(customer.id, nextCustomer);
     store.data.customerPoints.set(id, { id, tenantId: ctx.tenantId, customerId: customer.id, points, before: customer.points || 0, after: nextPoints, reasonCode: body.reasonCode, orderId: body.orderId || null, createdBy: ctx.userId, createdAt: runtime.nowIso() });
     runtime.addAudit(ctx, 'customers.points.adjust', 'CUSTOMER_POINT', id, customer, nextCustomer);
+    if (Math.abs(points) >= HIGH_VALUE_THRESHOLD) {
+      runtime.addAudit(ctx, 'POINTS_HIGH_VALUE_ADJUST', 'CUSTOMER_POINT', id, null,
+        { customerId: customer.id, points, reasonCode: body.reasonCode, dayTotalAbsAfter: dayTotalAbs + Math.abs(points) });
+    }
     runtime.json(res, 200, { pointLedgerId: id, customerId: customer.id, before: customer.points || 0, after: nextPoints });
   });
 

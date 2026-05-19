@@ -385,6 +385,93 @@ async function run() {
     assert.notEqual(r.body.token, manager.token);
   });
 
+  // ---- E. Cross-tenant isolation (negative tests) ----
+  // Reset the SQLite-backed login bucket again so the tenant-B login below
+  // doesn't trip the 10/min/IP cap accumulated by A's 9 prior logins.
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = path.resolve(__dirname, '..', 'data', 'store.db');
+    const db = new Database(dbPath);
+    db.exec('DELETE FROM rate_limit');
+    db.close();
+  } catch { /* best-effort */ }
+  const TENANT_B = `${TENANT}-foreign`;
+  const adminB = await (async () => {
+    const r = await request('POST', '/api/v1/auth/login',
+      { tenantId: TENANT_B, role: 'ADMIN', pin: '9001', storeId: STORE });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body;
+  })();
+
+  await test('E1 tenant B cannot GET tenant A order by id', async () => {
+    const r = await request('GET', `/api/v1/orders/${orderId}`, null, authHeader(adminB.token));
+    assert.ok(r.status === 404 || r.status === 403, `cross-tenant order leak status=${r.status}`);
+  });
+
+  await test('E2 tenant B cannot PATCH tenant A order discount', async () => {
+    const r = await request('PATCH', `/api/v1/orders/${orderId}/discount`,
+      { amount: 5, reasonCode: 'MANAGER_APPROVAL', idempotencyKey: idem() }, authHeader(adminB.token));
+    assert.ok(r.status === 404 || r.status === 403);
+  });
+
+  await test('E3 tenant B cannot pay tenant A order', async () => {
+    const r = await request('POST', `/api/v1/orders/${orderId}/pay/manual`,
+      { idempotencyKey: idem(), amount: 1, paymentMethod: 'CASH', cashReceived: 1 },
+      authHeader(adminB.token));
+    assert.ok(r.status === 404 || r.status === 403);
+  });
+
+  await test('E4 tenant B cannot void tenant A order', async () => {
+    const r = await request('POST', `/api/v1/orders/${orderId}/void`,
+      { reasonCode: 'INPUT_ERROR', idempotencyKey: idem() }, authHeader(adminB.token));
+    assert.ok(r.status === 404 || r.status === 403);
+  });
+
+  await test('E5 tenant B order list excludes tenant A order', async () => {
+    const r = await request('GET', '/api/v1/order-hub?storeId=store-001', null, authHeader(adminB.token));
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.items));
+    assert.ok(!r.body.items.some((o) => o.orderId === orderId),
+      'tenant B saw tenant A orderId');
+  });
+
+  await test('E6 tenant B audit log excludes tenant A entries', async () => {
+    const r = await request('GET', '/api/v1/audit-logs?limit=200', null, authHeader(adminB.token));
+    assert.equal(r.status, 200);
+    for (const entry of r.body.items || []) {
+      assert.notEqual(entry.tenantId, TENANT,
+        `tenant B audit-log leaked entry for tenant A: ${JSON.stringify(entry)}`);
+    }
+  });
+
+  await test('E7 tenant B cannot read tenant A customers via search', async () => {
+    // Create customer in A first.
+    await request('POST', '/api/v1/customers',
+      { phone: '0912345678', name: '張先生' }, authHeader(supervisor.token));
+    // B's MEMBERSHIP gate may fail on STARTER plan; if so 403 is acceptable.
+    const r = await request('GET', '/api/v1/customers/search?phone=0912345678', null, authHeader(adminB.token));
+    if (r.status === 200) {
+      assert.equal((r.body.items || []).length, 0, 'tenant B searched into tenant A customers');
+    } else {
+      assert.ok([400, 403].includes(r.status), `unexpected isolation response ${r.status}`);
+    }
+  });
+
+  await test('E8 tenant B cannot change tenant A subscription', async () => {
+    // adminB only authorises tenant B's subscription, so this both confirms
+    // role + isolation: the change should target B's plan, not A's.
+    const r = await request('POST', '/api/v1/subscription/change',
+      { planCode: 'GROWTH', billingCycle: 'MONTHLY', idempotencyKey: idem() },
+      authHeader(adminB.token));
+    assert.equal(r.status, 200);
+    // Re-read A's subscription as A's admin to confirm it is still CHAIN
+    // (not GROWTH).
+    const aSub = await request('GET', '/api/v1/subscription/current', null, authHeader(admin.token));
+    assert.equal(aSub.status, 200);
+    assert.equal(aSub.body.planCode, 'CHAIN',
+      'tenant A subscription was changed by tenant B request');
+  });
+
   console.log(`\nRESULTS: ${passed} passed / ${failed} failed`);
   if (failed) {
     console.log('\nFailures:');

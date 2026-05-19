@@ -1681,7 +1681,23 @@ if ('serviceWorker' in navigator) {
 }
 
 bind();
+// Demo profile gate: server reports demoProfilesEnabled in /health. In
+// production the 3 hardcoded shortcut buttons (with cleartext PINs) are
+// hidden and a "請以商家帳號登入" message takes their place.
+async function applyDemoProfileGate() {
+  try {
+    const r = await fetch('/health', { cache: 'no-store' });
+    if (!r.ok) return;
+    const body = await r.json();
+    const enabled = body.demoProfilesEnabled !== false;
+    const demoEl = document.querySelector('[data-demo-profiles]');
+    const prodEl = document.querySelector('[data-prod-profiles]');
+    if (demoEl) demoEl.hidden = !enabled;
+    if (prodEl) prodEl.hidden = enabled;
+  } catch { /* health unreachable — leave demo visible for offline-shell access */ }
+}
 run(async () => {
+  applyDemoProfileGate();
   await restoreSession();
   if (inSession()) await bootData();
   else showAuthGate(true);
