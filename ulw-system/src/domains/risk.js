@@ -99,7 +99,8 @@ function register(router, runtime) {
     const invoices = invoiceRows(runtime, ctx, storeId);
     const exceptions = invoices.filter((invoice) => invoice.uploadState !== 'UPLOADED');
     res.setHeader('x-environment', 'sandbox');
-    runtime.json(res, 200, { environment: 'sandbox', mode: 'SANDBOX_UNTIL_GO_GATE', warning: '正式電子發票需完成會計師、加值中心、sandbox、字軌與補傳 gate。', totals: { invoices: invoices.length, pendingUpload: invoices.filter((invoice) => invoice.uploadState === 'PENDING_UPLOAD').length, uploaded: invoices.filter((invoice) => invoice.uploadState === 'UPLOADED').length, exceptions: exceptions.length }, exceptions: exceptions.map((invoice) => ({ invoiceId: invoice.id, orderId: invoice.orderId, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, lastErrorCode: invoice.lastErrorCode })) });
+    res.setHeader('x-non-production', '1');
+    runtime.json(res, 200, { environment: 'sandbox', non_production: true, mode: 'SANDBOX_UNTIL_GO_GATE', warning: '正式電子發票需完成會計師、加值中心、sandbox、字軌與補傳 gate。', totals: { invoices: invoices.length, pendingUpload: invoices.filter((invoice) => invoice.uploadState === 'PENDING_UPLOAD').length, uploaded: invoices.filter((invoice) => invoice.uploadState === 'UPLOADED').length, exceptions: exceptions.length }, exceptions: exceptions.map((invoice) => ({ invoiceId: invoice.id, orderId: invoice.orderId, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, lastErrorCode: invoice.lastErrorCode })) });
   });
 
   router.add('POST', '/api/v1/invoices/issue-sandbox', async ({ req, res, ctx }) => {
@@ -109,8 +110,9 @@ function register(router, runtime) {
     if (!order || order.tenantId !== ctx.tenantId || order.paymentState !== 'PAID') { runtime.json(res, 404, runtime.error('INVOICE_ORDER_NOT_READY', 'paid order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
     res.setHeader('x-environment', 'sandbox');
+    res.setHeader('x-non-production', '1');
     const invoice = await ensureInvoice(runtime, ctx, order);
-    runtime.json(res, 200, { ...invoice, environment: 'sandbox', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
+    runtime.json(res, 200, { ...invoice, environment: 'sandbox', non_production: true, mode: 'SANDBOX_UNTIL_GO_GATE', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
   });
 
   // Provider-driven upload attempt — replaces the manual "mark-uploaded" path
@@ -144,8 +146,11 @@ function register(router, runtime) {
       runtime.addAudit(ctx, 'INVOICE_UPLOAD_SUCCESS', 'INVOICE', invoice.id,
         { uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, attempts: invoice.attempts || 0 },
         { uploadState: next.uploadState, lifecycleState: next.lifecycleState, attempts });
-      res.setHeader('x-environment', provider.capabilities.environment || 'sandbox');
-      runtime.json(res, 200, { ...next, environment: provider.capabilities.environment || 'sandbox' });
+      const env = provider.capabilities.environment || 'sandbox';
+      const nonProd = env !== 'production';
+      res.setHeader('x-environment', env);
+      if (nonProd) res.setHeader('x-non-production', '1');
+      runtime.json(res, 200, { ...next, environment: env, non_production: nonProd, mode: nonProd ? 'SANDBOX_UNTIL_GO_GATE' : 'PRODUCTION' });
     } catch (err) {
       const retryable = err.retryable !== false;
       const nextState = retryable ? 'UPLOAD_FAILED' : 'UPLOAD_FAILED';
@@ -167,7 +172,8 @@ function register(router, runtime) {
     store.data.invoices.set(invoice.id, next);
     runtime.addAudit(ctx, 'invoices.mark_uploaded_sandbox', 'INVOICE', invoice.id, invoice, next);
     res.setHeader('x-environment', 'sandbox');
-    runtime.json(res, 200, { ...next, environment: 'sandbox' });
+    res.setHeader('x-non-production', '1');
+    runtime.json(res, 200, { ...next, environment: 'sandbox', non_production: true, mode: 'SANDBOX_UNTIL_GO_GATE' });
   });
 
   router.add('POST', /^\/api\/v1\/invoices\/([\w-]+)\/void-sandbox$/, async ({ req, res, ctx, params }) => {
@@ -184,7 +190,8 @@ function register(router, runtime) {
     store.data.invoices.set(invoice.id, next);
     runtime.addAudit(ctx, 'invoices.void_sandbox', 'INVOICE', invoice.id, invoice, next);
     res.setHeader('x-environment', 'sandbox');
-    runtime.json(res, 200, { invoice: { ...next, environment: 'sandbox', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' }, void: record, environment: 'sandbox', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
+    res.setHeader('x-non-production', '1');
+    runtime.json(res, 200, { invoice: { ...next, environment: 'sandbox', non_production: true, mode: 'SANDBOX_UNTIL_GO_GATE', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' }, void: record, environment: 'sandbox', non_production: true, mode: 'SANDBOX_UNTIL_GO_GATE', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
   });
 
   router.add('GET', '/api/v1/reconciliation/daily', async ({ res, ctx, url }) => {

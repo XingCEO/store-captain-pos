@@ -207,9 +207,19 @@ const mockMobile = {
 };
 
 register(cashDrawer);
-register(mockCard);
-register(mockQr);
-register(mockMobile);
+// Mock CARD / QR / MOBILE providers return fake authorization codes. They
+// must NEVER be registered in production unless explicit operator ack via
+// ALLOW_MOCK_PAYMENT_PROVIDERS=1. Otherwise a CASHIER hitting paymentMethod=
+// CARD would receive a fake "approved" response and the customer walks out
+// unpaid. Cash drawer always registers because it has no upstream side
+// effects.
+const allowMockProviders = process.env.NODE_ENV !== 'production'
+  || process.env.ALLOW_MOCK_PAYMENT_PROVIDERS === '1';
+if (allowMockProviders) {
+  register(mockCard);
+  register(mockQr);
+  register(mockMobile);
+}
 
 function defaultProviderFor(method) {
   switch (method) {

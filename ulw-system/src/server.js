@@ -170,7 +170,18 @@ if (require.main === module) {
     logger.error('Refusing to start: ulw-system is sandbox/demo PoC. Set DEMO_MODE=1 or unset NODE_ENV=production.');
     process.exit(1);
   }
+  // When production + demo, require explicit per-subsystem ack so an operator
+  // cannot accidentally serve paying customers from the sandbox payment /
+  // invoice stack. Each ack independently signals "I know this is non-prod".
   if (process.env.NODE_ENV === 'production' && process.env.DEMO_MODE === '1') {
+    const missingAcks = [];
+    if (process.env.ALLOW_MOCK_PAYMENT_PROVIDERS !== '1') missingAcks.push('ALLOW_MOCK_PAYMENT_PROVIDERS=1');
+    if (process.env.INVOICE_NON_PRODUCTION_ACK !== '1') missingAcks.push('INVOICE_NON_PRODUCTION_ACK=1');
+    if (missingAcks.length > 0) {
+      logger.error({ missingAcks },
+        'Refusing to start: NODE_ENV=production with DEMO_MODE=1 requires explicit non-production acks for every mock subsystem.');
+      process.exit(1);
+    }
     logger.warn('WARNING: sandbox/demo PoC running with NODE_ENV=production and DEMO_MODE=1. Invoice and payment flows are stubs.');
   }
 

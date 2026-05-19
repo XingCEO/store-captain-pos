@@ -1,6 +1,34 @@
+const crypto = require('crypto');
 const { orderItems, paidOrders } = require('./commerce');
 const { roleRank } = require('../core/runtime');
 const { requireFeature } = require('../core/entitlements');
+
+// Channel guest auth: tenantPublicKey is a bearer-grade secret. Require at
+// least 32 chars of input, hash inputs with sha256, then compare with
+// crypto.timingSafeEqual against the stored hash. Stored values may be either
+// "sha256:<hex>" (preferred) or a legacy plaintext value — both are normalised
+// to the same hashed form before compare. The minimum-length check is enforced
+// on raw input, never on the stored side.
+const TENANT_PUBKEY_MIN_LEN = 32;
+function hashPubKey(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+function normalisedStoredHash(stored) {
+  if (!stored) return null;
+  const s = String(stored);
+  if (s.startsWith('sha256:')) return s.slice(7);
+  // Legacy unhashed value — hash on the fly.
+  return hashPubKey(s);
+}
+function pubKeyMatches(input, stored) {
+  const storedHash = normalisedStoredHash(stored);
+  if (!storedHash || storedHash.length !== 64) return false;
+  const inputHash = hashPubKey(input);
+  const a = Buffer.from(inputHash, 'hex');
+  const b = Buffer.from(storedHash, 'hex');
+  if (a.length !== b.length) return false;
+  try { return crypto.timingSafeEqual(a, b); } catch { return false; }
+}
 
 function inventoryKey(ctx, skuId) {
   return `${ctx.tenantId}:${skuId}`;
@@ -103,7 +131,13 @@ function register(router, runtime) {
         const slug = body.storeSlug;
         const pubKey = body.tenantPublicKey;
         if (!slug || !pubKey) { runtime.json(res, 403, runtime.error('CHANNEL_AUTH_FAILED', 'storeSlug and tenantPublicKey required for guest channel orders')); return; }
-        const matchedStore = [...store.data.stores.values()].find((s) => s.tenantPublicKey === pubKey && (s.slug === slug || s.id === slug));
+        if (String(pubKey).length < TENANT_PUBKEY_MIN_LEN) {
+          runtime.json(res, 403, runtime.error('CHANNEL_AUTH_FAILED', `tenantPublicKey must be at least ${TENANT_PUBKEY_MIN_LEN} characters`));
+          return;
+        }
+        const matchedStore = [...store.data.stores.values()].find(
+          (s) => (s.slug === slug || s.id === slug) && pubKeyMatches(pubKey, s.tenantPublicKey),
+        );
         if (!matchedStore) { runtime.json(res, 403, runtime.error('CHANNEL_AUTH_FAILED', 'store not found for given storeSlug and tenantPublicKey')); return; }
         resolvedCtx = { ...ctx, tenantId: matchedStore.tenantId, storeId: matchedStore.id, storeIds: [matchedStore.id] };
         runtime.ensureTenantDefaults(resolvedCtx.tenantId);

@@ -463,9 +463,14 @@ function createRuntime({ dataDir, publicDir }) {
   }
 
   function requireStoreScope(res, ctx, storeId) {
-    if (!storeId || ctx.storeIds.length === 0 || ctx.storeIds.includes(storeId)) {
-      return true;
+    if (!storeId) return true;
+    // Fail-closed: a user with no scoped stores cannot operate on any store.
+    // Previously an empty storeIds bypassed the check entirely.
+    if (!Array.isArray(ctx.storeIds) || ctx.storeIds.length === 0) {
+      json(res, 403, error('TENANT_NOT_AUTHORIZED', 'user has no scoped stores', { tenantId: ctx.tenantId, storeId, scopedStoreIds: [] }));
+      return false;
     }
+    if (ctx.storeIds.includes(storeId)) return true;
     json(res, 403, error('TENANT_NOT_AUTHORIZED', 'storeId not in tenant scope', { tenantId: ctx.tenantId, storeId, scopedStoreIds: ctx.storeIds }));
     return false;
   }
@@ -490,22 +495,53 @@ function createRuntime({ dataDir, publicDir }) {
 
   function ensureTenantDefaults(tenantId) {
     let changed = false;
+    // Fixed demo PINs are only safe in dev/test. In production we randomise PINs
+    // per tenant and drop the cleartext into a one-shot credentials file. To opt
+    // out (recovery, smoke), set OMC_BOOTSTRAP_SEED_FIXED_PINS=1 explicitly.
+    const allowFixedPins = process.env.NODE_ENV !== 'production'
+      || process.env.OMC_BOOTSTRAP_SEED_FIXED_PINS === '1';
+    function pinFor(fixed) {
+      if (allowFixedPins) return fixed;
+      // 8-char base32 alphanumeric (Crockford-like): 40 bits of entropy.
+      return crypto.randomBytes(8).toString('base64url').replace(/[^A-Z0-9]/gi, '').slice(0, 8).toUpperCase();
+    }
     const users = [
-      { role: 'ADMIN', name: '系統管理員', emailPrefix: 'admin', pin: '9001' },
-      { role: 'SUPERVISOR', name: '班主管', emailPrefix: 'supervisor', pin: '7001' },
-      { role: 'MANAGER', name: '店長', emailPrefix: 'manager', pin: '5001' },
-      { role: 'CASHIER', name: '收銀員', emailPrefix: 'cashier', pin: '1001' },
+      { role: 'ADMIN', name: '系統管理員', emailPrefix: 'admin', pin: pinFor('9001') },
+      { role: 'SUPERVISOR', name: '班主管', emailPrefix: 'supervisor', pin: pinFor('7001') },
+      { role: 'MANAGER', name: '店長', emailPrefix: 'manager', pin: pinFor('5001') },
+      { role: 'CASHIER', name: '收銀員', emailPrefix: 'cashier', pin: pinFor('1001') },
     ];
+    const mintedCredentials = [];
     for (const seed of users) {
       const existing = [...store.data.users.values()].find((user) => user.tenantId === tenantId && user.role === seed.role && user.status !== 'DISABLED');
       if (!existing) {
         const userId = store.nextId('user');
         const at = nowIso();
         store.data.users.set(`${tenantId}:${userId}`, { id: userId, tenantId, role: seed.role, name: seed.name, email: `${seed.emailPrefix}@${tenantId}.local`, pin: hashPin(seed.pin), status: 'ACTIVE', createdAt: at, updatedAt: at });
+        mintedCredentials.push({ role: seed.role, email: `${seed.emailPrefix}@${tenantId}.local`, pin: seed.pin });
         changed = true;
       } else if (!existing.pin) {
         store.data.users.set(`${tenantId}:${existing.id}`, { ...existing, pin: hashPin(seed.pin), updatedAt: nowIso() });
+        mintedCredentials.push({ role: seed.role, email: existing.email, pin: seed.pin });
         changed = true;
+      }
+    }
+    // In production with randomised PINs, drop the cleartext to a one-shot file
+    // under dataDir/seed-credentials/. File is created with 0600 (best-effort on
+    // Windows ACLs) and never overwritten. Operator copies and deletes.
+    if (!allowFixedPins && mintedCredentials.length > 0) {
+      try {
+        const credDir = path.join(store.dataDir || '.', 'seed-credentials');
+        fs.mkdirSync(credDir, { recursive: true });
+        const credFile = path.join(credDir, `tenant-${tenantId}-${Date.now()}.txt`);
+        const body = [`# Store Captain POS — seeded credentials for tenant ${tenantId}`,
+          `# Generated ${nowIso()}. Rotate immediately after operator pickup.`,
+          ''].concat(mintedCredentials.map((c) => `${c.role}\t${c.email}\tPIN=${c.pin}`)).join('\n') + '\n';
+        fs.writeFileSync(credFile, body, { mode: 0o600, flag: 'wx' });
+        logger.warn({ tenantId, credFile, roles: mintedCredentials.map((c) => c.role) },
+          'tenant seeded with random PINs; credentials written one-shot');
+      } catch (err) {
+        logger.error({ tenantId, err: err.message }, 'failed to persist seeded credentials file');
       }
     }
     if (![...store.data.stores.values()].some((item) => item.tenantId === tenantId && item.id === 'store-001')) {
