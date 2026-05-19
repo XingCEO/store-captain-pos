@@ -1,5 +1,6 @@
 const { orderItems, paidOrders } = require('./commerce');
 const { roleRank } = require('../core/runtime');
+const { requireFeature } = require('../core/entitlements');
 
 function inventoryKey(ctx, skuId) {
   return `${ctx.tenantId}:${skuId}`;
@@ -57,6 +58,7 @@ function register(router, runtime) {
   // Role: MANAGER+; dedup by externalReferenceId per tenant+source
   router.add('POST', '/api/v1/order-sources/manual', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'CHANNEL_SYNC')) return;
     const body = await runtime.parseBody(req);
     const storeId = body.tenantStoreId || body.storeId || ctx.storeId;
     const channel = body.channel;
@@ -109,6 +111,8 @@ function register(router, runtime) {
         if (!runtime.requireTenant(res, ctx)) return;
       }
 
+      if (!requireFeature(runtime, res, resolvedCtx, 'CHANNEL_SYNC')) return;
+
       if (channel === 'LINE' && !body.lineChannelToken) { runtime.json(res, 403, runtime.error('CHANNEL_AUTH_FAILED', 'lineChannelToken required')); return; }
 
       // idempotencyKey is required for channel orders
@@ -160,6 +164,7 @@ function register(router, runtime) {
   // Role: MANAGER+; audit CHANNEL_ORDER_STATUS_CHANGED with before/after state
   router.add('PATCH', /^\/api\/v1\/channels\/orders\/([\w-]+)\/status$/, async ({ req, res, ctx, params }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'CHANNEL_SYNC')) return;
     const order = store.data.orders.get(params[0]);
     if (!order || order.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('SOURCE_ITEM_CLOSED', 'order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
@@ -285,6 +290,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/inventory/levels', async ({ res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'INVENTORY')) return;
     runtime.json(res, 200, { items: inventoryRows(runtime, ctx) });
   });
 
@@ -292,6 +298,7 @@ function register(router, runtime) {
   // Role: MANAGER+; ledger row written BEFORE stockOnHand mutation; INVENTORY_NEGATIVE_AFTER_MOVE; INVENTORY_LEDGER_WRITE_FAILED
   router.add('POST', '/api/v1/inventory/adjustments', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'INVENTORY')) return;
     const body = await runtime.parseBody(req);
     const storeId = body.storeId || ctx.storeId;
     if (storeId && !runtime.requireStoreScope(res, ctx, storeId)) return;
@@ -318,6 +325,7 @@ function register(router, runtime) {
   // Role: MANAGER+; one ledger row per item delta written BEFORE level mutation
   router.add('POST', '/api/v1/inventory/counts', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'INVENTORY')) return;
     const body = await runtime.parseBody(req);
     const storeId = body.storeId || ctx.storeId;
     if (storeId && !runtime.requireStoreScope(res, ctx, storeId)) return;
@@ -359,6 +367,7 @@ function register(router, runtime) {
       runtime.json(res, 403, runtime.error('PERMISSION_DENIED', 'SUPERVISOR role required'));
       return;
     }
+    if (!requireFeature(runtime, res, ctx, 'INVENTORY')) return;
     const body = await runtime.parseBody(req);
     const storeId = body.storeId;
     if (!runtime.requireStoreScope(res, ctx, storeId)) {
@@ -451,6 +460,7 @@ function register(router, runtime) {
   // Role: SUPERVISOR+; requireStoreScope on BOTH fromStoreId and toStoreId
   router.add('POST', '/api/v1/inventory/transfers', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'SUPERVISOR')) return;
+    if (!requireFeature(runtime, res, ctx, 'STORE_TRANSFER')) return;
     const body = await runtime.parseBody(req);
     const sku = store.data.skus.get(body.skuId);
     const qty = Number(body.qty);

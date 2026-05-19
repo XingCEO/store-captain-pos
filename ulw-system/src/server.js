@@ -19,6 +19,7 @@ const {
 const { spec: openapiSpec } = require('./core/openapi');
 const identity = require('./domains/identity');
 const catalog = require('./domains/catalog');
+const subscription = require('./domains/subscription');
 const commerce = require('./domains/commerce');
 const operations = require('./domains/operations');
 const risk = require('./domains/risk');
@@ -32,6 +33,7 @@ function createApp({ dataDir, publicDir, port }) {
 
   identity.register(router, runtime);
   catalog.register(router, runtime);
+  subscription.register(router, runtime);
   commerce.register(router, runtime);
   operations.register(router, runtime);
   risk.register(router, runtime);
@@ -69,7 +71,7 @@ function createApp({ dataDir, publicDir, port }) {
     const startNs = process.hrtime.bigint();
     const originalEnd = res.end.bind(res);
     res.end = (...args) => {
-      if (req.method !== 'GET' && res.statusCode < 400) {
+      if (res.statusCode < 400 && (req.method !== 'GET' || runtime.store.data.auditLogs.length > 0)) {
         try { runtime.store.persist(); } catch (err) {
           logger.error({ err: err.message, requestId }, 'persist on response failed');
         }

@@ -1,7 +1,9 @@
 const crypto = require('crypto');
-const { orderItems, paidOrders, paymentsFor, ensureInvoice } = require('./commerce');
+const { orderItems, paidOrders, paymentsFor, ensureInvoice, invoiceTransitionAllowed } = require('./commerce');
 const { inventoryRows } = require('./operations');
 const { roleRank } = require('../core/runtime');
+const { requireFeature } = require('../core/entitlements');
+const invoiceProvider = require('../core/invoiceProvider');
 
 function dayRange(date) {
   return { from: `${date}T00:00:00.000Z`, to: `${date}T23:59:59.999Z` };
@@ -107,7 +109,53 @@ function register(router, runtime) {
     if (!order || order.tenantId !== ctx.tenantId || order.paymentState !== 'PAID') { runtime.json(res, 404, runtime.error('INVOICE_ORDER_NOT_READY', 'paid order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
     res.setHeader('x-environment', 'sandbox');
-    runtime.json(res, 200, { ...ensureInvoice(runtime, ctx, order), environment: 'sandbox', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
+    const invoice = await ensureInvoice(runtime, ctx, order);
+    runtime.json(res, 200, { ...invoice, environment: 'sandbox', warning: 'SANDBOX_ONLY_DO_NOT_TRUST_FOR_REAL_TAX' });
+  });
+
+  // Provider-driven upload attempt — replaces the manual "mark-uploaded" path
+  // for production. Calls invoiceProvider.upload() and applies the FSM result.
+  // body.simulate forces a specific outcome ('fail-retryable' | 'fail-fatal' |
+  // 'pending') for tests; production omits it.
+  router.add('POST', /^\/api\/v1\/invoices\/([\w-]+)\/upload-attempt$/, async ({ req, res, ctx, params }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    const invoice = store.data.invoices.get(params[0]);
+    if (!invoice || invoice.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('INVOICE_NOT_FOUND', 'invoice not found')); return; }
+    if (!runtime.requireStoreScope(res, ctx, invoice.storeId)) return;
+    const body = await runtime.parseBody(req).catch(() => ({}));
+    const provider = invoiceProvider.active();
+    const attempts = (invoice.attempts || 0) + 1;
+    try {
+      const result = await provider.upload({
+        invoiceId: invoice.id,
+        tenantId: ctx.tenantId,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: invoice.amount,
+        attempts,
+        metadata: body.simulate ? { simulate: body.simulate } : {},
+      });
+      // Enforce FSM — provider must yield a valid forward transition.
+      if (!invoiceTransitionAllowed(invoice.lifecycleState, result.lifecycleState)) {
+        runtime.json(res, 409, runtime.error('INVOICE_FSM_VIOLATION', `provider lifecycle ${result.lifecycleState} not allowed from ${invoice.lifecycleState}`));
+        return;
+      }
+      const next = { ...invoice, uploadState: result.uploadState, lifecycleState: result.lifecycleState, attempts, lastErrorCode: null, ackId: result.ackId || null, providerRaw: result.raw || invoice.providerRaw, updatedAt: runtime.nowIso() };
+      store.data.invoices.set(invoice.id, next);
+      runtime.addAudit(ctx, 'INVOICE_UPLOAD_SUCCESS', 'INVOICE', invoice.id,
+        { uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, attempts: invoice.attempts || 0 },
+        { uploadState: next.uploadState, lifecycleState: next.lifecycleState, attempts });
+      res.setHeader('x-environment', provider.capabilities.environment || 'sandbox');
+      runtime.json(res, 200, { ...next, environment: provider.capabilities.environment || 'sandbox' });
+    } catch (err) {
+      const retryable = err.retryable !== false;
+      const nextState = retryable ? 'UPLOAD_FAILED' : 'UPLOAD_FAILED';
+      const next = { ...invoice, uploadState: 'UPLOAD_FAILED', lifecycleState: nextState, attempts, lastErrorCode: err.errorCode || 'INVOICE_UPLOAD_FAILED', updatedAt: runtime.nowIso() };
+      store.data.invoices.set(invoice.id, next);
+      runtime.addAudit(ctx, 'INVOICE_UPLOAD_FAILED', 'INVOICE', invoice.id,
+        { uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, attempts: invoice.attempts || 0 },
+        { uploadState: next.uploadState, lifecycleState: next.lifecycleState, attempts, errorCode: next.lastErrorCode, retryable });
+      runtime.json(res, retryable ? 503 : 422, runtime.error(err.errorCode || 'INVOICE_UPLOAD_FAILED', err.message || 'invoice upload failed', { retryable, attempts }));
+    }
   });
 
   router.add('POST', /^\/api\/v1\/invoices\/([\w-]+)\/mark-uploaded$/, async ({ res, ctx, params }) => {
@@ -145,6 +193,7 @@ function register(router, runtime) {
       runtime.json(res, 403, runtime.error('PERMISSION_DENIED', 'MANAGER or above required'));
       return;
     }
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
 
     const dateParam = url.searchParams.get('date');
     if (!dateParam || !/^\d{4}-\d{2}-\d{2}$/.test(dateParam) || Number.isNaN(new Date(`${dateParam}T00:00:00.000Z`).getTime())) {
@@ -208,6 +257,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/reports/payment-breakdown', async ({ res, ctx, url }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');
     const storeId = url.searchParams.get('storeId');
@@ -228,6 +278,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/reports/top-products', async ({ res, ctx, url }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');
     const storeId = url.searchParams.get('storeId');
@@ -247,6 +298,7 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/reports/exports', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const body = await runtime.parseBody(req);
 
     if (!body.reportType || !body.from || !body.to || !['daily', 'weekly', 'monthly'].includes(body.reportType)) {
@@ -289,7 +341,7 @@ function register(router, runtime) {
     const rowCount = rowsArray.length;
 
     const exportId = store.nextId('export');
-    const token = Math.random().toString(36).slice(2);
+    const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const checksum = 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(rowsArray)).digest('hex');
 
@@ -321,6 +373,7 @@ function register(router, runtime) {
 
   router.add('GET', /^\/api\/v1\/reports\/exports\/([\w-]+)$/, async ({ res, ctx, params }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const record = store.data.reportExports.get(params[0]);
     if (!record || record.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('TENANT_NOT_AUTHORIZED', 'report not found')); return; }
     for (const sid of (record.storeIds || [])) {
@@ -331,6 +384,7 @@ function register(router, runtime) {
 
   router.add('GET', /^\/api\/v1\/reports\/exports\/([\w-]+)\/download$/, async ({ res, ctx, params, url }) => {
     if (!runtime.requireTenant(res, ctx)) return;
+    if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const record = store.data.reportExports.get(params[0]);
     if (!record || record.tenantId !== ctx.tenantId || url.searchParams.get('token') !== record.token) {
       runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'download token invalid'));
@@ -430,6 +484,7 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/customers', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     const body = await runtime.parseBody(req);
     const phone = String(body.phone || '').trim();
     if (!/^09\d{8}$/.test(phone)) { runtime.json(res, 400, runtime.error('CUSTOMER_PHONE_INVALID', 'Taiwan mobile phone required')); return; }
@@ -444,17 +499,20 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/customers/search', async ({ res, ctx, url }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     const phone = (url.searchParams.get('phone') || '').trim();
     runtime.json(res, 200, { items: [...store.data.customers.values()].filter((customer) => customer.tenantId === ctx.tenantId && (!phone || customer.phone.includes(phone))) });
   });
 
   router.add('GET', '/api/v1/coupons', async ({ res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     runtime.json(res, 200, { items: [...store.data.coupons.values()].filter((coupon) => coupon.tenantId === ctx.tenantId && coupon.status === 'ACTIVE') });
   });
 
   router.add('POST', '/api/v1/coupons/redeem', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     const body = await runtime.parseBody(req);
     const coupon = [...store.data.coupons.values()].find((item) => item.tenantId === ctx.tenantId && item.code === body.code && item.status === 'ACTIVE');
     const order = store.data.orders.get(body.orderId);
@@ -474,6 +532,7 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/customers/points/adjust', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     const body = await runtime.parseBody(req);
     const customer = store.data.customers.get(body.customerId);
     const points = Number(body.points);
@@ -489,6 +548,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/ai/daily-brief', async ({ res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'AI_DAILY_BRIEF')) return;
     const date = runtime.nowIso().slice(0, 10);
     const range = dayRange(date);
     const orders = paidOrders(runtime, ctx, ctx.storeId, range.from, range.to);
@@ -504,6 +564,7 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/telemetry/heartbeat', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MULTI_STORE_DIAGNOSTICS')) return;
     const body = await runtime.parseBody(req);
     if (!body.terminalId || typeof body.syncLagSeconds !== 'number') { runtime.json(res, 400, runtime.error('SYNC_STALE', 'terminalId and syncLagSeconds required')); return; }
     const storeId = body.storeId || ctx.storeId;
@@ -516,6 +577,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/telemetry/dashboard', async ({ res, ctx, url }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireFeature(runtime, res, ctx, 'MULTI_STORE_DIAGNOSTICS')) return;
     const storeId = url.searchParams.get('storeId');
     if (url.searchParams.has('tenantId')) { runtime.json(res, 400, runtime.error('DEVICE_MISMATCH', 'tenantId is server-derived')); return; }
     if (!runtime.requireStoreScope(res, ctx, storeId)) return;

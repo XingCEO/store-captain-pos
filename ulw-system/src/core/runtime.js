@@ -11,6 +11,7 @@ const { logger } = require('./logger');
 const metrics = require('./metrics');
 const rateLimit = require('./rateLimit');
 const auditPg = require('./auditPg');
+const { hashPin } = require('./security');
 
 const roleRank = {
   GUEST: 0,
@@ -27,6 +28,7 @@ const persistedMaps = [
   'cashDrawers', 'orderSources',
   'telemetrySnapshots', 'reportExports', 'reportSchedules',
   'users', 'stores', 'storeSettings',
+  'subscriptions',
   'invoices', 'invoiceTracks', 'invoiceAllowances', 'invoiceVoids', 'settlements',
   'customers', 'customerPoints', 'coupons', 'couponRedemptions',
   'aiInsights',
@@ -56,6 +58,7 @@ function defaultCounters() {
     order: 1, orderItem: 1, orderEvent: 1, refund: 1,
     outbox: 1, job: 1, payment: 1, cashDrawer: 1, source: 1, export: 1, schedule: 1,
     user: 1, store: 1,
+    subscription: 1,
     invoice: 1, track: 1, allowance: 1, invoiceVoid: 1, settlement: 1,
     customer: 1, point: 1, coupon: 1, redemption: 1, insight: 1,
     inventoryMove: 1, stockCount: 1, transfer: 1, purchase: 1, recipe: 1, recipeItem: 1,
@@ -262,8 +265,7 @@ function bearerToken(req) {
 }
 
 function sessionResponse(session, token) {
-  return {
-    token,
+  const response = {
     tenantId: session.tenantId,
     userId: session.userId,
     userName: session.userName || session.userId,
@@ -273,6 +275,8 @@ function sessionResponse(session, token) {
     storeIds: session.storeIds,
     expiresAt: session.expiresAt,
   };
+  if (token) response.token = token;
+  return response;
 }
 
 function createRuntime({ dataDir, publicDir }) {
@@ -280,8 +284,9 @@ function createRuntime({ dataDir, publicDir }) {
 
   function serveStatic(urlPath, res, req = null) {
     const relativePath = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
-    const filePath = path.join(publicDir, relativePath);
-    if (!filePath.startsWith(publicDir)) return false;
+    const root = path.resolve(publicDir);
+    const filePath = path.resolve(root, relativePath);
+    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) return false;
     let stat;
     try { stat = fs.statSync(filePath); } catch { return false; }
     if (stat.isDirectory()) return false;
@@ -316,6 +321,7 @@ function createRuntime({ dataDir, publicDir }) {
         storeIds: Array.isArray(session.storeIds) ? session.storeIds : [],
         storeId: session.storeId,
         sessionId: hashedToken,
+        rawToken,
         userAgent: req.headers['user-agent'] || '',
         ip: req.socket.remoteAddress || '0.0.0.0',
         deviceId: req.headers['x-device-id'] || session.deviceId || 'unknown',
@@ -328,6 +334,7 @@ function createRuntime({ dataDir, publicDir }) {
       storeIds: [],
       storeId: null,
       sessionId: null,
+      rawToken: null,
       userAgent: req.headers['user-agent'] || '',
       ip: req.socket.remoteAddress || '0.0.0.0',
       deviceId: req.headers['x-device-id'] || 'unknown',
@@ -380,24 +387,48 @@ function createRuntime({ dataDir, publicDir }) {
   function ensureTenantDefaults(tenantId) {
     let changed = false;
     const users = [
-      { role: 'ADMIN', name: '系統管理員', emailPrefix: 'admin' },
-      { role: 'SUPERVISOR', name: '班主管', emailPrefix: 'supervisor' },
-      { role: 'MANAGER', name: '店長', emailPrefix: 'manager' },
-      { role: 'CASHIER', name: '收銀員', emailPrefix: 'cashier' },
+      { role: 'ADMIN', name: '系統管理員', emailPrefix: 'admin', pin: '9001' },
+      { role: 'SUPERVISOR', name: '班主管', emailPrefix: 'supervisor', pin: '7001' },
+      { role: 'MANAGER', name: '店長', emailPrefix: 'manager', pin: '5001' },
+      { role: 'CASHIER', name: '收銀員', emailPrefix: 'cashier', pin: '1001' },
     ];
     for (const seed of users) {
-      const exists = [...store.data.users.values()].some((user) => user.tenantId === tenantId && user.role === seed.role && user.status !== 'DISABLED');
-      if (!exists) {
+      const existing = [...store.data.users.values()].find((user) => user.tenantId === tenantId && user.role === seed.role && user.status !== 'DISABLED');
+      if (!existing) {
         const userId = store.nextId('user');
         const at = nowIso();
-        store.data.users.set(`${tenantId}:${userId}`, { id: userId, tenantId, role: seed.role, name: seed.name, email: `${seed.emailPrefix}@${tenantId}.local`, status: 'ACTIVE', createdAt: at, updatedAt: at });
+        store.data.users.set(`${tenantId}:${userId}`, { id: userId, tenantId, role: seed.role, name: seed.name, email: `${seed.emailPrefix}@${tenantId}.local`, pin: hashPin(seed.pin), status: 'ACTIVE', createdAt: at, updatedAt: at });
+        changed = true;
+      } else if (!existing.pin) {
+        store.data.users.set(`${tenantId}:${existing.id}`, { ...existing, pin: hashPin(seed.pin), updatedAt: nowIso() });
         changed = true;
       }
     }
     if (![...store.data.stores.values()].some((item) => item.tenantId === tenantId && item.id === 'store-001')) {
       const at = nowIso();
       store.data.stores.set(`${tenantId}:store-001`, { id: 'store-001', tenantId, name: '一號店', status: 'ACTIVE', address: '待填寫地址', phone: '02-0000-0000', createdAt: at, updatedAt: at });
-      store.data.storeSettings.set(`${tenantId}:store-001`, { tenantId, storeId: 'store-001', receiptTitle: '店長 AI POS', taxMode: 'SANDBOX', trainingModeAllowed: true, invoiceSandboxOnly: true, updatedAt: at });
+      store.data.storeSettings.set(`${tenantId}:store-001`, { tenantId, storeId: 'store-001', receiptTitle: '店長 AI POS', taxMode: 'SANDBOX', trainingModeAllowed: true, invoiceSandboxOnly: true, autoCompleteOutbox: false, updatedAt: at });
+      changed = true;
+    }
+    if (!store.data.subscriptions.has(tenantId)) {
+      const at = nowIso();
+      store.data.subscriptions.set(tenantId, {
+        id: store.nextId('subscription'),
+        tenantId,
+        planCode: 'STARTER',
+        status: 'TRIALING',
+        billingCycle: 'MONTHLY',
+        storeLimit: 1,
+        seatLimit: 4,
+        billingMode: 'LOCAL_MVP_MANUAL_BILLING',
+        paymentState: 'NO_PAYMENT_DUE',
+        currentPeriodStart: at,
+        currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        cancelAtPeriodEnd: false,
+        createdAt: at,
+        updatedAt: at,
+      });
       changed = true;
     }
     if (![...store.data.products.values()].some((product) => product.tenantId === tenantId)) {

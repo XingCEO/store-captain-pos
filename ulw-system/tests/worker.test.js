@@ -15,10 +15,9 @@ function makeStore() {
   };
 }
 
-test('outbox PENDING advances to IN_FLIGHT then DONE', () => {
+test('outbox PENDING advances to IN_FLIGHT then RETRYABLE_ERROR by default', () => {
   const store = makeStore();
   store.data.outboxJobs.set('job-1', { id: 'job-1', tenantId: 't1', state: 'PENDING', attempts: 0 });
-  store.data.storeSettings.set('t1:store-001', { autoCompleteOutbox: true });
 
   tickOutbox(store);
   let job = store.data.outboxJobs.get('job-1');
@@ -27,6 +26,15 @@ test('outbox PENDING advances to IN_FLIGHT then DONE', () => {
 
   tickOutbox(store);
   job = store.data.outboxJobs.get('job-1');
+  assert.equal(job.state, 'RETRYABLE_ERROR');
+});
+
+test('outbox can be auto-completed only when store setting explicitly allows it', () => {
+  const store = makeStore();
+  store.data.outboxJobs.set('job-4', { id: 'job-4', tenantId: 't1', state: 'IN_FLIGHT', attempts: 1, storeId: 'store-001' });
+  store.data.storeSettings.set('t1:store-001', { autoCompleteOutbox: true });
+  tickOutbox(store);
+  const job = store.data.outboxJobs.get('job-4');
   assert.equal(job.state, 'DONE');
 });
 

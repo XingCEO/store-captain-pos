@@ -1,5 +1,6 @@
 const { roleRank } = require('../core/runtime');
 const { hashPin, verifyPin, hashToken, generateSessionToken } = require('../core/security');
+const { requireCurrentPlanCapacity } = require('../core/entitlements');
 
 // In-memory lockout state — intentionally not persisted; resets on restart.
 // Keyed by both per-IP and per-userId/tenant to defeat IP rotation.
@@ -143,6 +144,14 @@ function register(router, runtime) {
     const tokenHash = hashToken(token);
     const at = runtime.nowIso();
     const selectedStore = store.data.stores.get(`${tenantId}:${storeId}`);
+    const allowedStoreIds = Array.isArray(user.storeIds) ? user.storeIds : [];
+    if (!selectedStore || selectedStore.status === 'DISABLED' || (allowedStoreIds.length > 0 && !allowedStoreIds.includes(storeId))) {
+      recordFailure(ipKey);
+      recordFailure(userKey);
+      failAudit(user.id, 'store_scope_invalid', userKey);
+      runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'store not allowed for user'));
+      return;
+    }
     const session = {
       tenantId,
       userId: user.id,
@@ -177,7 +186,7 @@ function register(router, runtime) {
       runtime.json(res, 403, runtime.error('LOGIN_INVALID_CREDENTIALS', 'session expired'));
       return;
     }
-    runtime.json(res, 200, runtime.sessionResponse(session, ctx.sessionId));
+    runtime.json(res, 200, runtime.sessionResponse(session, ctx.rawToken));
   });
 
   // ---------------------------------------------------------------------------
@@ -258,6 +267,17 @@ function register(router, runtime) {
       runtime.json(res, 409, runtime.error('USER_EMAIL_DUPLICATE', 'email already in use within tenant'));
       return;
     }
+    if (!requireCurrentPlanCapacity(runtime, res, ctx, { seats: 1 })) return;
+
+    const storeIds = Array.isArray(body.storeIds) && body.storeIds.length > 0 ? body.storeIds.map(String) : [ctx.storeId];
+    for (const storeId of storeIds) {
+      if (!runtime.requireStoreScope(res, ctx, storeId)) return;
+      const existingStore = store.data.stores.get(`${ctx.tenantId}:${storeId}`);
+      if (!existingStore || existingStore.status === 'DISABLED') {
+        runtime.json(res, 400, runtime.error('STORE_INVALID', 'storeIds must reference active stores in tenant'));
+        return;
+      }
+    }
 
     const id = store.nextId('user');
     const at = runtime.nowIso();
@@ -268,7 +288,7 @@ function register(router, runtime) {
       name: String(body.name),
       email,
       pin: body.pin ? hashPin(String(body.pin)) : null,
-      storeIds: Array.isArray(body.storeIds) && body.storeIds.length > 0 ? body.storeIds.map(String) : [ctx.storeId],
+      storeIds,
       status: 'ACTIVE',
       createdAt: at,
       updatedAt: at,
@@ -330,6 +350,18 @@ function register(router, runtime) {
       status: body.status || current.status,
       updatedAt: runtime.nowIso(),
     };
+    if (current.status === 'DISABLED' && next.status !== 'DISABLED') {
+      if (!requireCurrentPlanCapacity(runtime, res, ctx, { seats: 1 })) return;
+    }
+    const nextStoreIds = Array.isArray(next.storeIds) ? next.storeIds : [];
+    for (const storeId of nextStoreIds) {
+      if (!runtime.requireStoreScope(res, ctx, storeId)) return;
+      const existingStore = store.data.stores.get(`${ctx.tenantId}:${storeId}`);
+      if (!existingStore || existingStore.status === 'DISABLED') {
+        runtime.json(res, 400, runtime.error('STORE_INVALID', 'storeIds must reference active stores in tenant'));
+        return;
+      }
+    }
     store.data.users.set(key, next);
 
     // Primary audit row: USER_UPDATED
@@ -355,6 +387,39 @@ function register(router, runtime) {
   router.add('GET', '/api/v1/stores', async ({ res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
     runtime.json(res, 200, { items: [...store.data.stores.values()].filter((item) => item.tenantId === ctx.tenantId) });
+  });
+
+  router.add('POST', '/api/v1/stores', async ({ req, res, ctx }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'ADMIN')) return;
+    if (!requireCurrentPlanCapacity(runtime, res, ctx, { stores: 1 })) return;
+    const body = await runtime.parseBody(req);
+    const name = String(body.name || '').trim();
+    if (!name) {
+      runtime.json(res, 400, runtime.error('STORE_INVALID', 'name required'));
+      return;
+    }
+    const id = store.nextId('store');
+    const at = runtime.nowIso();
+    const record = {
+      id,
+      tenantId: ctx.tenantId,
+      name,
+      status: 'ACTIVE',
+      address: String(body.address || '待填寫地址'),
+      phone: String(body.phone || '02-0000-0000'),
+      createdAt: at,
+      updatedAt: at,
+    };
+    store.data.stores.set(`${ctx.tenantId}:${id}`, record);
+    store.data.storeSettings.set(`${ctx.tenantId}:${id}`, { tenantId: ctx.tenantId, storeId: id, receiptTitle: '店長 AI POS', taxMode: 'SANDBOX', trainingModeAllowed: true, invoiceSandboxOnly: true, autoCompleteOutbox: false, updatedAt: at });
+    const actorKey = `${ctx.tenantId}:${ctx.userId}`;
+    const actor = store.data.users.get(actorKey);
+    if (actor) {
+      const currentStoreIds = Array.isArray(actor.storeIds) ? actor.storeIds : [ctx.storeId];
+      store.data.users.set(actorKey, { ...actor, storeIds: [...new Set([...currentStoreIds, id])], updatedAt: at });
+    }
+    runtime.addAudit(ctx, 'STORE_CREATED', 'store', id, null, { id, name, status: record.status });
+    runtime.json(res, 200, record);
   });
 
   // ---------------------------------------------------------------------------

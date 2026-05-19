@@ -24,6 +24,17 @@
 | USER_NOT_FOUND | 404 | 使用者不存在 | PATCH /api/v1/users/:id | 否 |
 | USER_EMAIL_DUPLICATE | 409 | 電郵在租戶內已被使用 | POST /api/v1/users | 否 |
 | ROLE_GRANT_FORBIDDEN | 403 | 角色授予權限不足或違反層級 | POST /api/v1/users, PATCH /api/v1/users/:id | 否 |
+| STORE_INVALID | 400 | 店鋪資料無效或使用者指定不存在店鋪 | POST /api/v1/stores, POST /api/v1/users, PATCH /api/v1/users/:id | 否 |
+
+## Subscription / 訂閱
+
+| 錯誤碼 | HTTP | 意義 | 來源路徑 | 可重試 |
+|-------|------|------|----------|--------|
+| SUBSCRIPTION_PLAN_INVALID | 400 | 方案代碼或計費週期無效 | POST /api/v1/subscription/change | 否 |
+| SUBSCRIPTION_STATE_INVALID | 400/409 | 訂閱狀態或取消原因不允許操作 | POST /api/v1/subscription/change, POST /api/v1/subscription/cancel | 否 |
+| SUBSCRIPTION_IDEMPOTENCY_CONFLICT | 409 | 訂閱冪等鍵承載衝突 | POST /api/v1/subscription/change, POST /api/v1/subscription/cancel | 否 |
+| SUBSCRIPTION_FEATURE_NOT_INCLUDED | 403 | 目前方案未包含指定功能 entitlement | 會員、庫存、AI 日報、進階報表、跨店調撥、多店診斷路由 | 否 |
+| SUBSCRIPTION_LIMIT_EXCEEDED | 409 | 目前方案的席次或店鋪數量上限不足 | POST /api/v1/users, POST /api/v1/stores, POST /api/v1/subscription/change | 否 |
 
 ## Catalog / 商品
 

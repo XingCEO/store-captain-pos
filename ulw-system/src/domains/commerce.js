@@ -1,4 +1,7 @@
 const { normalizeBusinessDate, isValidBusinessDate } = require('../core/tz');
+const paymentProvider = require('../core/paymentProvider');
+const invoiceProvider = require('../core/invoiceProvider');
+const metrics = require('../core/metrics');
 
 // Invoice lifecycleState FSM. Disallowed transitions are rejected to prevent
 // fields drifting via partial-update bugs. Used by ensureInvoice + future
@@ -69,6 +72,8 @@ function appendOrderEvent(runtime, ctx, orderId, eventType, meta) {
 
 function applyInventoryForOrder(runtime, ctx, order, direction, reason) {
   const movements = [];
+  const levelUpdates = [];
+  const ledgerRows = [];
   for (const item of orderItems(runtime, order.id)) {
     const sku = runtime.store.data.skus.get(item.skuId);
     if (!sku || sku.tenantId !== ctx.tenantId || !sku.stockTracked) continue;
@@ -76,11 +81,14 @@ function applyInventoryForOrder(runtime, ctx, order, direction, reason) {
     const current = runtime.store.data.inventoryLevels.get(key) || { tenantId: ctx.tenantId, skuId: sku.id, stockOnHand: Number(sku.stock || 0) };
     const nextStock = current.stockOnHand + (direction === 'decrement' ? -item.qty : item.qty);
     if (nextStock < 0) return { success: false, errorCode: 'OUT_OF_STOCK', message: `insufficient stock for sku ${sku.id}` };
-    runtime.store.data.inventoryLevels.set(key, { ...current, stockOnHand: nextStock, updatedAt: runtime.nowIso() });
     const movementId = runtime.store.nextId('inventoryMove');
-    runtime.store.data.inventoryLedger.set(movementId, { id: movementId, tenantId: ctx.tenantId, skuId: sku.id, skuCode: sku.skuCode, orderId: order.id, direction, qty: item.qty, before: current.stockOnHand, after: nextStock, reason, at: runtime.nowIso() });
+    const at = runtime.nowIso();
+    levelUpdates.push([key, { ...current, stockOnHand: nextStock, updatedAt: at }]);
+    ledgerRows.push([movementId, { id: movementId, tenantId: ctx.tenantId, skuId: sku.id, skuCode: sku.skuCode, orderId: order.id, direction, qty: item.qty, before: current.stockOnHand, after: nextStock, reason, at }]);
     movements.push({ movementId, skuId: sku.id, before: current.stockOnHand, after: nextStock });
   }
+  for (const [key, level] of levelUpdates) runtime.store.data.inventoryLevels.set(key, level);
+  for (const [movementId, row] of ledgerRows) runtime.store.data.inventoryLedger.set(movementId, row);
   return { success: true, movements };
 }
 
@@ -105,18 +113,27 @@ function invoiceForOrder(runtime, orderId) {
   return [...runtime.store.data.invoices.values()].find((invoice) => invoice.orderId === orderId) || null;
 }
 
-function ensureInvoice(runtime, ctx, order) {
+async function ensureInvoice(runtime, ctx, order) {
   const existing = invoiceForOrder(runtime, order.id);
   if (existing) return existing;
   const paidAmount = paymentsTotal(runtime, order.id);
   const invoiceId = runtime.store.nextId('invoice');
   const at = runtime.nowIso();
+  const provider = invoiceProvider.active();
+  // Provider issues the invoice — real adapter would round-trip 加值中心 here.
+  const issued = await provider.issue({
+    orderId: order.id,
+    tenantId: ctx.tenantId,
+    storeId: order.storeId,
+    amount: order.grandTotal || paidAmount,
+    invoiceLocalId: invoiceId,
+  });
   const invoice = {
     id: invoiceId,
     tenantId: ctx.tenantId,
     orderId: order.id,
     storeId: order.storeId,
-    invoiceNumber: `SANDBOX-${invoiceId}`,
+    invoiceNumber: issued.invoiceNumber,
     buyerIdentifier: null,
     carrierType: 'NONE',
     carrierNumber: null,
@@ -124,9 +141,11 @@ function ensureInvoice(runtime, ctx, order) {
     amount: order.grandTotal || paidAmount,
     paymentAmount: paidAmount,
     uploadState: paidAmount === (order.grandTotal || 0) ? 'PENDING_UPLOAD' : 'AMOUNT_MISMATCH',
-    lifecycleState: 'ISSUED_SANDBOX',
-    migVersion: 'MIG-SANDBOX',
-    turnkeyVersion: 'TURNKEY-SANDBOX',
+    lifecycleState: issued.lifecycleState || 'ISSUED_SANDBOX',
+    migVersion: provider.capabilities.migVersion,
+    turnkeyVersion: provider.capabilities.turnkeyVersion,
+    providerCode: provider.code,
+    providerRaw: issued.raw || null,
     attempts: 0,
     lastErrorCode: paidAmount === (order.grandTotal || 0) ? null : 'INVOICE_AMOUNT_MISMATCH',
     createdBy: ctx.userId,
@@ -185,6 +204,11 @@ function register(router, runtime) {
     const response = { id: order.id, orderNumber: order.orderNumber, state: order.state, currency: 'TWD', subtotal, discountTotal, taxTotal: 0, grandTotal: order.grandTotal, createdAt: at, sync: { jobId: outbox.id, state: outbox.state }, items: lineRecords.map((line) => ({ id: line.id, skuId: line.skuId, name: line.name, qty: line.qty, unitPrice: line.unitPrice, subtotal: line.subtotal })), duplicated: false };
     store.data.orderIdempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), orderId, response });
     runtime.addAudit(ctx, 'ORDER_CREATED', 'order', orderId, null, { id: order.id, orderNumber: order.orderNumber, state: order.state, storeId: order.storeId, itemCount: lineRecords.length, subtotal: order.subtotal, discountTotal: order.discountTotal, grandTotal: order.grandTotal, createdBy: order.createdBy, createdAt: order.createdAt });
+    try {
+      metrics.ordersCreatedTotal.inc({ tenant_id: ctx.tenantId, store_id: storeId });
+      metrics.ordersStateTotal.inc({ state: 'DRAFT' });
+      metrics.orderGrandTotalTwd.observe(order.grandTotal || 0);
+    } catch { /* metric optional */ }
     runtime.json(res, 201, response);
   });
 
@@ -225,24 +249,65 @@ function register(router, runtime) {
     }
     const at = runtime.nowIso();
     const paymentId = store.nextId('payment');
+    // Delegate to payment provider — POS core never speaks to PSP directly.
+    // See src/core/paymentProvider.js for the contract.
+    const provider = paymentProvider.defaultProviderFor(method);
+    if (!provider) { runtime.json(res, 400, runtime.error('PAYMENT_INVALID', `no provider registered for method ${method}`)); return; }
+    let providerResult;
+    try {
+      providerResult = await provider.charge({
+        tenantId: ctx.tenantId,
+        orderId: order.id,
+        amount,
+        currency: 'TWD',
+        method,
+        idempotencyKey: body.idempotencyKey || null,
+        metadata: body.providerMetadata || {},
+      });
+    } catch (err) {
+      const code = err.errorCode || 'PAYMENT_DECLINED';
+      runtime.addAudit(ctx, 'PAYMENT_DECLINED', 'order', order.id, null, { method, amount, providerCode: provider.code, reason: err.message });
+      runtime.json(res, 402, runtime.error(code, err.message || 'payment declined by provider'));
+      return;
+    }
     // correlationId is server-generated. Client cannot inject — prevents
     // attackers from forging settlement reconciliation keys.
-    const payment = { id: paymentId, tenantId: ctx.tenantId, orderId: order.id, method, paymentProvider: method === 'CASH' ? 'CASH_DRAWER' : 'EXTERNAL_PSP_TERMINAL', providerTransactionId: method === 'CASH' ? null : `psp-${paymentId}`, authorizationCode: method === 'CASH' ? null : `AUTH-${paymentId}`, amount, received: cashReceived, change: cashReceived - amount, status: 'CAPTURED', settlementState: method === 'CASH' ? 'CASH_COUNTED_IN_DRAWER' : 'PENDING_SETTLEMENT', correlationId: `corr-${paymentId}`, cashierMemo: body.cashierMemo || null, createdAt: at, createdBy: ctx.userId };
-    store.data.payments.set(paymentId, payment);
+    const payment = {
+      id: paymentId, tenantId: ctx.tenantId, orderId: order.id, method,
+      paymentProvider: provider.code,
+      providerTransactionId: providerResult.providerTransactionId,
+      authorizationCode: providerResult.authorizationCode,
+      amount, received: cashReceived, change: cashReceived - amount,
+      status: 'CAPTURED',
+      settlementState: providerResult.settlementState,
+      fee: providerResult.fee || 0,
+      netSettledAmount: providerResult.netSettledAmount || amount,
+      correlationId: `corr-${paymentId}`,
+      cashierMemo: body.cashierMemo || null,
+      providerRaw: providerResult.raw || null,
+      createdAt: at, createdBy: ctx.userId,
+    };
     const nextPaid = alreadyPaid + amount;
     const fullyPaid = nextPaid >= (order.grandTotal || 0);
     const stock = fullyPaid && !order.inventoryAppliedAt ? applyInventoryForOrder(runtime, ctx, order, 'decrement', 'POS_SALE') : { success: true, movements: [] };
     if (!stock.success) { runtime.json(res, 409, runtime.error(stock.errorCode, stock.message)); return; }
+    store.data.payments.set(paymentId, payment);
     const printJobId = fullyPaid ? store.nextId('job') : null;
     if (fullyPaid) store.data.printJobs.set(printJobId, { id: printJobId, tenantId: ctx.tenantId, storeId: order.storeId, orderId: order.id, documentType: 'RECEIPT', state: 'QUEUED', attempts: 0, lastErrorCode: null, createdAt: at, updatedAt: at });
     const next = { ...order, state: fullyPaid ? (method === 'CASH' ? 'PAID_CASH' : 'PAID_PENDING') : 'PARTIALLY_PAID', paymentState: fullyPaid ? 'PAID' : 'PARTIALLY_PAID', paidAt: fullyPaid ? at : order.paidAt || null, inventoryAppliedAt: fullyPaid ? (order.inventoryAppliedAt || at) : order.inventoryAppliedAt || null, updatedAt: at };
     store.data.orders.set(order.id, next);
-    const invoice = fullyPaid ? ensureInvoice(runtime, ctx, next) : null;
+    const invoice = fullyPaid ? await ensureInvoice(runtime, ctx, next) : null;
     appendOrderEvent(runtime, ctx, order.id, fullyPaid ? 'ORDER_PAID' : 'ORDER_PARTIAL_PAYMENT', { paymentId, method, amount, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), inventoryMovements: stock.movements });
     runtime.addAudit(ctx, 'ORDER_PAID_MANUAL', 'order', order.id,
       { id: order.id, state: order.state, paymentState: order.paymentState, grandTotal: order.grandTotal },
       { id: next.id, state: next.state, paymentState: next.paymentState, grandTotal: next.grandTotal, payment: { method: payment.method, amount: payment.amount, status: payment.status, providerTransactionId: payment.providerTransactionId } });
-    runtime.json(res, 200, { orderId: order.id, state: next.state, paymentState: next.paymentState, paymentSummary: { method, amount, received: payment.received, change: payment.change, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), providerTransactionId: payment.providerTransactionId, authorizationCode: payment.authorizationCode, settlementState: payment.settlementState }, invoice: invoice ? { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState } : null, printQueueId: printJobId });
+    try {
+      metrics.paymentsTotal.inc({ method, status: payment.status });
+      metrics.paymentAmountTwd.observe({ method }, amount);
+      metrics.ordersStateTotal.inc({ state: next.state });
+      if (invoice) metrics.invoicesIssuedTotal.inc({ provider: invoice.providerCode || 'UNKNOWN', lifecycle: invoice.lifecycleState });
+    } catch { /* metric optional */ }
+    runtime.json(res, 200, { orderId: order.id, state: next.state, paymentState: next.paymentState, paymentSummary: { method, amount, received: payment.received, change: payment.change, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), providerTransactionId: payment.providerTransactionId, authorizationCode: payment.authorizationCode, settlementState: payment.settlementState, paymentProvider: payment.paymentProvider, fee: payment.fee, netSettledAmount: payment.netSettledAmount }, invoice: invoice ? { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState } : null, printQueueId: printJobId });
   });
 
   router.add('POST', /^\/api\/v1\/orders\/([\w-]+)\/refund$/, async ({ req, res, ctx, params }) => {
@@ -270,10 +335,7 @@ function register(router, runtime) {
     const refundId = store.nextId('refund');
     const at = runtime.nowIso();
     const refund = { id: refundId, tenantId: ctx.tenantId, orderId: order.id, storeId: order.storeId, amount, reasonCode: body.reasonCode, method: body.method || 'CASH', status: 'APPROVED_MANUAL', restock: Boolean(body.restock), createdBy: ctx.userId, createdAt: at };
-    store.data.refunds.set(refundId, refund);
     const next = { ...order, state: amount === paid - refunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundTotal: refunded + amount, updatedAt: at };
-    store.data.orders.set(order.id, next);
-    appendOrderEvent(runtime, ctx, order.id, 'ORDER_REFUNDED', { refundId, amount, reasonCode: body.reasonCode, restock: refund.restock });
     if (refund.restock) {
       // applyInventoryForOrder may fail only if the increment would push another
       // item negative (impossible here since we never decrement on refund). Still
@@ -289,6 +351,9 @@ function register(router, runtime) {
           { skuId: m.skuId, stockOnHand: m.after, refundId, orderId: order.id });
       }
     }
+    store.data.refunds.set(refundId, refund);
+    store.data.orders.set(order.id, next);
+    appendOrderEvent(runtime, ctx, order.id, 'ORDER_REFUNDED', { refundId, amount, reasonCode: body.reasonCode, restock: refund.restock });
     const invoice = invoiceForOrder(runtime, order.id);
     if (invoice) {
       const allowanceId = store.nextId('allowance');
@@ -297,6 +362,7 @@ function register(router, runtime) {
     runtime.addAudit(ctx, 'ORDER_REFUNDED', 'order', order.id,
       { id: order.id, state: order.state, paymentState: order.paymentState, refundTotal: order.refundTotal || 0 },
       { id: next.id, state: next.state, paymentState: next.paymentState, refundTotal: next.refundTotal });
+    try { metrics.refundsTotal.inc({ reason: body.reasonCode }); metrics.ordersStateTotal.inc({ state: next.state }); } catch { /* metric optional */ }
     const response = { refund, order: orderResponse(runtime, next) };
     if (idempotencyKey) {
       const idemKey = `${ctx.tenantId}:${order.storeId}:refund:${idempotencyKey}`;
@@ -329,6 +395,7 @@ function register(router, runtime) {
     runtime.addAudit(ctx, 'ORDER_VOIDED', 'order', order.id,
       { id: order.id, state: order.state, paymentState: order.paymentState },
       { id: next.id, state: next.state, voidReasonCode: next.voidReasonCode, voidNote: next.voidNote });
+    try { metrics.voidsTotal.inc({ reason: body.reasonCode }); metrics.ordersStateTotal.inc({ state: 'VOIDED' }); } catch { /* metric optional */ }
     const response = { orderId: order.id, state: next.state, reasonCode: next.voidReasonCode };
     if (idempotencyKey) {
       const idemKey = `${ctx.tenantId}:${order.storeId}:void:${idempotencyKey}`;
@@ -351,6 +418,11 @@ function register(router, runtime) {
     if (!order || order.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('TENANT_NOT_AUTHORIZED', 'order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
     runtime.json(res, 200, { orderId: order.id, events: store.data.orderEvents.get(order.id) || [] });
+  });
+
+  router.add('GET', '/api/v1/payment-providers', async ({ res, ctx }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    runtime.json(res, 200, { items: paymentProvider.listCapabilities() });
   });
 
   router.add('GET', '/api/v1/payments', async ({ res, ctx, url }) => {

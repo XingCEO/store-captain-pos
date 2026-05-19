@@ -9,7 +9,7 @@ const { startTestServer, stopTestServer, request } = require('./helpers');
 test('session token is stored as sha256 hash, not plaintext', async () => {
   const ctx = await startTestServer();
   try {
-    const r = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'sess-hash', role: 'ADMIN', storeId: 'store-001' });
+    const r = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'sess-hash', role: 'ADMIN', storeId: 'store-001', pin: '9001' });
     assert.equal(r.status, 200);
     const token = r.body.token;
     // Token is returned to client in plaintext
@@ -18,7 +18,7 @@ test('session token is stored as sha256 hash, not plaintext', async () => {
     // Force a persist to flush the session table to DB
     await request(ctx.port, 'POST', '/api/v1/auth/logout', null, { Authorization: `Bearer ${token}` });
     // Re-login (so there IS a session row to check)
-    const r2 = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'sess-hash', role: 'ADMIN', storeId: 'store-001' });
+    const r2 = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'sess-hash', role: 'ADMIN', storeId: 'store-001', pin: '9001' });
     const token2 = r2.body.token;
 
     // Inspect raw DB JSON for the sessions Map — token2 (plaintext) must NOT appear, but its sha256 hash should.

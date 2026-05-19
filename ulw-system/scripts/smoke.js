@@ -78,6 +78,7 @@ async function runTests() {
       tenantId,
       role: 'ADMIN',
       storeId: 'store-001',
+      pin: '9001',
     });
     assert.equal(res.status, 200);
     assert(res.body.token, 'token field missing');
@@ -241,6 +242,7 @@ async function runTests() {
       tenantId,
       role: 'CASHIER',
       storeId: 'store-001',
+      pin: '1001',
     });
     assert.equal(cashierRes.status, 200);
     const cashierToken = cashierRes.body.token;
@@ -316,6 +318,16 @@ async function runTests() {
     assert.equal(res.status, 200);
     assert.equal(res.headers['x-environment'], 'sandbox', 'x-environment header must be sandbox');
     assert.equal(res.body.environment, 'sandbox', 'environment field in JSON must be sandbox');
+  });
+
+  // Test 10: Subscription local ledger
+  await test('GET /api/v1/subscription/current returns Starter trial ledger', async () => {
+    const res = await request('GET', '/api/v1/subscription/current', null, {
+      Authorization: `Bearer ${token}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.planCode, 'STARTER');
+    assert.equal(res.body.billing.mode, 'LOCAL_MVP_MANUAL_BILLING');
   });
 
   console.log(`\nRESULTS: ${passed} passed / ${failed} failed`);

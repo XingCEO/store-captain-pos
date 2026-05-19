@@ -54,6 +54,56 @@ const auditLogsTotal = new client.Counter({
   registers: [register],
 });
 
+const ordersStateTotal = new client.Counter({
+  name: 'ulw_orders_state_total',
+  help: 'Order state transitions (PAID_CASH, PAID_PENDING, VOIDED, REFUNDED, PARTIALLY_REFUNDED)',
+  labelNames: ['state'],
+  registers: [register],
+});
+
+const refundsTotal = new client.Counter({
+  name: 'ulw_refunds_total',
+  help: 'Refunds processed',
+  labelNames: ['reason'],
+  registers: [register],
+});
+
+const voidsTotal = new client.Counter({
+  name: 'ulw_voids_total',
+  help: 'Order voids',
+  labelNames: ['reason'],
+  registers: [register],
+});
+
+const invoicesIssuedTotal = new client.Counter({
+  name: 'ulw_invoices_issued_total',
+  help: 'Invoices issued via provider',
+  labelNames: ['provider', 'lifecycle'],
+  registers: [register],
+});
+
+const invoiceUploadsTotal = new client.Counter({
+  name: 'ulw_invoice_uploads_total',
+  help: 'Invoice upload attempt outcomes',
+  labelNames: ['state'],
+  registers: [register],
+});
+
+const paymentAmountTwd = new client.Histogram({
+  name: 'ulw_payment_amount_twd',
+  help: 'Payment amount distribution in TWD (integer dollars)',
+  labelNames: ['method'],
+  buckets: [10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 50000],
+  registers: [register],
+});
+
+const orderGrandTotalTwd = new client.Histogram({
+  name: 'ulw_order_grand_total_twd',
+  help: 'Order grand total distribution in TWD',
+  buckets: [10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 50000],
+  registers: [register],
+});
+
 const dbQueryDuration = new client.Histogram({
   name: 'ulw_db_query_duration_seconds',
   help: 'SQLite query duration in seconds',
@@ -112,7 +162,14 @@ module.exports = {
   register,
   httpRequestsTotal,
   ordersCreatedTotal,
+  ordersStateTotal,
   paymentsTotal,
+  paymentAmountTwd,
+  orderGrandTotalTwd,
+  refundsTotal,
+  voidsTotal,
+  invoicesIssuedTotal,
+  invoiceUploadsTotal,
   idempotencyReplaysTotal,
   outboxJobsTotal,
   outboxDeadLetterTotal,

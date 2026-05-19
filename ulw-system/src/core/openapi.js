@@ -108,6 +108,33 @@ const spec = {
         responses: { 200: { description: 'items' }, 403: { description: 'Role too low' } },
       },
     },
+    '/api/v1/subscription/plans': {
+      get: {
+        summary: 'List local MVP subscription plans',
+        responses: { 200: { description: 'Starter / Growth / Chain plan catalogue' } },
+      },
+    },
+    '/api/v1/subscription/current': {
+      get: {
+        summary: 'Get tenant current subscription',
+        security: [{ bearerAuth: [] }],
+        responses: { 200: { description: 'Current subscription ledger row' }, 403: { description: 'Role too low' } },
+      },
+    },
+    '/api/v1/subscription/change': {
+      post: {
+        summary: 'Change tenant subscription plan in local ledger',
+        security: [{ bearerAuth: [] }],
+        responses: { 200: { description: 'Subscription changed' }, 400: { description: 'Invalid plan or idempotency key' }, 409: { description: 'Idempotency or state conflict' } },
+      },
+    },
+    '/api/v1/subscription/cancel': {
+      post: {
+        summary: 'Cancel tenant subscription at period end',
+        security: [{ bearerAuth: [] }],
+        responses: { 200: { description: 'Subscription marked cancel-at-period-end' }, 400: { description: 'Invalid reason or idempotency key' }, 409: { description: 'State conflict' } },
+      },
+    },
     '/api/v1/invoices/health': {
       get: {
         summary: 'Sandbox invoice health',

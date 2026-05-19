@@ -26,3 +26,14 @@ test('static file returns 304 when If-None-Match matches ETag', async () => {
     await stopTestServer(ctx);
   }
 });
+
+test('static file server rejects path traversal outside public dir', async () => {
+  const ctx = await startTestServer();
+  try {
+    const res = await request(ctx.port, 'GET', '/../package.json');
+    assert.equal(res.status, 404);
+    assert.equal(res.body.errorCode, 'PATH_NOT_FOUND');
+  } finally {
+    await stopTestServer(ctx);
+  }
+});

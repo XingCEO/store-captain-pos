@@ -13,6 +13,10 @@ test('GET /openapi.json returns OpenAPI 3.0 spec', async () => {
     assert.ok(res.body.paths['/api/v1/auth/login']);
     assert.ok(res.body.paths['/api/v1/orders']);
     assert.ok(res.body.paths['/api/v1/audit-logs']);
+    assert.ok(res.body.paths['/api/v1/subscription/plans']);
+    assert.ok(res.body.paths['/api/v1/subscription/current']);
+    assert.ok(res.body.paths['/api/v1/subscription/change']);
+    assert.ok(res.body.paths['/api/v1/subscription/cancel']);
     assert.ok(res.body.components.securitySchemes.bearerAuth);
   } finally {
     await stopTestServer(ctx);

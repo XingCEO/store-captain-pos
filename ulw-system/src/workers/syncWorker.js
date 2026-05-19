@@ -7,7 +7,9 @@ const { createRuntime } = require('../core/runtime');
 const { start } = require('../core/syncWorker');
 const { logger } = require('../core/logger');
 
-const dataDir = path.resolve(__dirname, '..', '..', 'data');
+const dataDir = process.env.ULW_DATA_DIR
+  ? path.resolve(process.env.ULW_DATA_DIR)
+  : path.resolve(__dirname, '..', '..', 'data');
 const publicDir = path.resolve(__dirname, '..', '..', 'public');
 const lockFile = path.join(dataDir, 'worker.lock');
 

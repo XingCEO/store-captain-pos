@@ -62,7 +62,8 @@ function request(port, method, path, body = null, headers = {}) {
 }
 
 async function loginAs(port, tenantId, role, storeId = 'store-001') {
-  const res = await request(port, 'POST', '/api/v1/auth/login', { tenantId, role, storeId });
+  const pins = { ADMIN: '9001', SUPERVISOR: '7001', MANAGER: '5001', CASHIER: '1001' };
+  const res = await request(port, 'POST', '/api/v1/auth/login', { tenantId, role, storeId, pin: pins[role] });
   if (res.status !== 200) throw new Error(`login ${role} failed status=${res.status} body=${JSON.stringify(res.body)}`);
   return res.body.token;
 }

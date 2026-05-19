@@ -39,7 +39,7 @@ test('orders survive server restart via SQLite snapshot', async () => {
   try {
     {
       const ctx = await bootApp(dataDir);
-      const login = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'persist-1', role: 'ADMIN', storeId: 'store-001' });
+      const login = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'persist-1', role: 'ADMIN', storeId: 'store-001', pin: '9001' });
       const token = login.body.token;
       const products = await request(ctx.port, 'GET', '/api/v1/products', null, { Authorization: `Bearer ${token}` });
       const skuId = products.body.items[0].skuId;
@@ -55,7 +55,7 @@ test('orders survive server restart via SQLite snapshot', async () => {
     assert.ok(fs.existsSync(path.join(dataDir, 'store.db')), 'store.db not created');
     {
       const ctx = await bootApp(dataDir);
-      const login = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'persist-1', role: 'ADMIN', storeId: 'store-001' });
+      const login = await request(ctx.port, 'POST', '/api/v1/auth/login', { tenantId: 'persist-1', role: 'ADMIN', storeId: 'store-001', pin: '9001' });
       const token = login.body.token;
       const fetched = await request(ctx.port, 'GET', `/api/v1/orders/${createdId}`, null, { Authorization: `Bearer ${token}` });
       assert.equal(fetched.status, 200, `order should survive restart, got status=${fetched.status} body=${JSON.stringify(fetched.body)}`);

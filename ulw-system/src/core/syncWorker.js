@@ -5,14 +5,18 @@
 
 const { logger } = require('./logger');
 const metrics = require('./metrics');
+const invoiceProvider = require('./invoiceProvider');
+const { invoiceTransitionAllowed } = require('../domains/commerce');
 
 const OUTBOX_INTERVAL_MS = 10_000;   // 10 s
 const TELEMETRY_INTERVAL_MS = 30_000; // 30 s
 const DRAFT_EXPIRY_INTERVAL_MS = 60_000; // 60 s
+const INVOICE_UPLOAD_INTERVAL_MS = 20_000; // 20 s
 const DRAFT_AGE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 h
 const TELEMETRY_UNREACHABLE_MS = 5 * 60 * 1000; // 5 min
 const TELEMETRY_RECOVERED_MS = 2 * 60 * 1000;   // 2 min
 const MAX_ATTEMPTS = 6;
+const INVOICE_MAX_ATTEMPTS = 6;
 
 function nowIso() {
   return new Date().toISOString();
@@ -84,12 +88,13 @@ function tickOutbox(store) {
         continue;
       }
 
-      // Read autoCompleteOutbox from storeSettings; default true for demo
+      // Read autoCompleteOutbox from storeSettings; default false so jobs do not
+      // claim cloud sync success without a real upstream adapter.
       const settingsKey = job.storeId ? `${job.tenantId}:${job.storeId}` : null;
       const settings = settingsKey ? store.data.storeSettings.get(settingsKey) : null;
       const autoComplete = settings && typeof settings.autoCompleteOutbox === 'boolean'
         ? settings.autoCompleteOutbox
-        : true;
+        : false;
 
       const nextState = autoComplete ? 'DONE' : 'RETRYABLE_ERROR';
       const next = { ...job, state: nextState, attempts, lastTriedAt: nowIso() };
@@ -183,6 +188,91 @@ function tickDraftExpiry(store) {
 }
 
 // ---------------------------------------------------------------------------
+// Invoice upload tick
+// ---------------------------------------------------------------------------
+// Picks up invoices with uploadState=PENDING_UPLOAD or UPLOAD_PENDING (post
+// ISSUED_SANDBOX transition) and calls invoiceProvider.upload(). The provider
+// is responsible for the actual 加值中心 round-trip; the worker enforces the
+// FSM and dead-letters after INVOICE_MAX_ATTEMPTS retries.
+async function tickInvoiceUpload(store) {
+  let changed = false;
+  const provider = invoiceProvider.active();
+  if (!provider) return false;
+  const now = Date.now();
+
+  for (const [key, invoice] of store.data.invoices.entries()) {
+    if (invoice.uploadState !== 'PENDING_UPLOAD' && invoice.uploadState !== 'UPLOAD_PENDING') continue;
+    if (invoice.nextRetryAt && new Date(invoice.nextRetryAt).getTime() > now) continue;
+    const attempts = (invoice.attempts || 0) + 1;
+
+    // Step 1: ensure lifecycleState is UPLOAD_PENDING before attempting upload.
+    // ISSUED_SANDBOX → UPLOAD_PENDING is a valid forward transition; provider
+    // upload() yields UPLOADED / UPLOAD_FAILED from there.
+    if (invoice.lifecycleState === 'ISSUED_SANDBOX' && invoiceTransitionAllowed('ISSUED_SANDBOX', 'UPLOAD_PENDING')) {
+      const advanced = { ...invoice, lifecycleState: 'UPLOAD_PENDING', updatedAt: nowIso() };
+      store.data.invoices.set(key, advanced);
+      pushAudit(store, invoice.tenantId, 'INVOICE_LIFECYCLE_ADVANCED', 'INVOICE', invoice.id,
+        { lifecycleState: invoice.lifecycleState },
+        { lifecycleState: 'UPLOAD_PENDING' });
+      changed = true;
+      continue; // pick it up next tick to perform the upload
+    }
+
+    if (attempts > INVOICE_MAX_ATTEMPTS) {
+      const next = { ...invoice, uploadState: 'DEAD_LETTER', attempts, lastErrorCode: 'RETRY_LIMIT_EXCEEDED', updatedAt: nowIso() };
+      store.data.invoices.set(key, next);
+      pushAudit(store, invoice.tenantId, 'INVOICE_UPLOAD_DEAD_LETTER', 'INVOICE', invoice.id,
+        { uploadState: invoice.uploadState, attempts: invoice.attempts || 0 },
+        { uploadState: 'DEAD_LETTER', attempts });
+      try { metrics.invoiceUploadsTotal && metrics.invoiceUploadsTotal.inc({ state: 'DEAD_LETTER' }); } catch { /* metric optional */ }
+      changed = true;
+      continue;
+    }
+
+    try {
+      const result = await provider.upload({
+        invoiceId: invoice.id,
+        tenantId: invoice.tenantId,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: invoice.amount,
+        attempts,
+      });
+      if (!invoiceTransitionAllowed(invoice.lifecycleState, result.lifecycleState)) {
+        const next = { ...invoice, attempts, lastErrorCode: 'INVOICE_FSM_VIOLATION', updatedAt: nowIso() };
+        store.data.invoices.set(key, next);
+        changed = true;
+        continue;
+      }
+      const next = { ...invoice, uploadState: result.uploadState, lifecycleState: result.lifecycleState, attempts, ackId: result.ackId || null, lastErrorCode: null, nextRetryAt: null, providerRaw: result.raw || invoice.providerRaw, updatedAt: nowIso() };
+      store.data.invoices.set(key, next);
+      pushAudit(store, invoice.tenantId, 'INVOICE_UPLOAD_SUCCESS', 'INVOICE', invoice.id,
+        { uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, attempts: invoice.attempts || 0 },
+        { uploadState: next.uploadState, lifecycleState: next.lifecycleState, attempts });
+      try { metrics.invoiceUploadsTotal && metrics.invoiceUploadsTotal.inc({ state: 'UPLOADED' }); } catch { /* metric optional */ }
+      changed = true;
+    } catch (err) {
+      const retryable = err.retryable !== false;
+      const backoffMs = Math.min(60_000 * Math.pow(2, attempts - 1), 30 * 60_000);
+      const next = {
+        ...invoice,
+        uploadState: 'UPLOAD_FAILED',
+        attempts,
+        lastErrorCode: err.errorCode || 'INVOICE_UPLOAD_FAILED',
+        nextRetryAt: retryable ? new Date(now + backoffMs).toISOString() : null,
+        updatedAt: nowIso(),
+      };
+      store.data.invoices.set(key, next);
+      pushAudit(store, invoice.tenantId, 'INVOICE_UPLOAD_FAILED', 'INVOICE', invoice.id,
+        { uploadState: invoice.uploadState, attempts: invoice.attempts || 0 },
+        { uploadState: 'UPLOAD_FAILED', attempts, errorCode: next.lastErrorCode, retryable });
+      try { metrics.invoiceUploadsTotal && metrics.invoiceUploadsTotal.inc({ state: 'UPLOAD_FAILED' }); } catch { /* metric optional */ }
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 function start(runtime, options = {}) {
@@ -230,14 +320,26 @@ function start(runtime, options = {}) {
     }
   }, draftInterval);
 
+  const invoiceInterval = options.invoiceInterval || INVOICE_UPLOAD_INTERVAL_MS;
+  const invoiceTimer = setInterval(async () => {
+    try {
+      const changed = await tickInvoiceUpload(store);
+      if (changed) store.persist();
+      logger.debug({ changed }, 'syncWorker invoice upload tick');
+    } catch (err) {
+      logger.error({ err: err.message }, 'syncWorker invoice upload tick error');
+    }
+  }, invoiceInterval);
+
   function stop() {
     clearInterval(outboxTimer);
     clearInterval(telemetryTimer);
     clearInterval(draftTimer);
+    clearInterval(invoiceTimer);
     logger.info('syncWorker stopped');
   }
 
   return { stop };
 }
 
-module.exports = { start, tickOutbox, tickTelemetry, tickDraftExpiry };
+module.exports = { start, tickOutbox, tickTelemetry, tickDraftExpiry, tickInvoiceUpload };

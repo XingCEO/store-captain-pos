@@ -81,6 +81,36 @@ test('pay/manual transitions order to PAID_CASH', async () => {
   }
 });
 
+test('pay/manual out-of-stock rejection leaves no payment side effect', async () => {
+  const ctx = await startTestServer();
+  try {
+    const token = await loginAs(ctx.port, 'orders-stock-atomic', 'ADMIN');
+    const auth = { Authorization: `Bearer ${token}` };
+    const products = await request(ctx.port, 'GET', '/api/v1/products', null, auth);
+    const tracked = products.body.items.find((item) => item.stockTracked);
+    assert.ok(tracked, 'expected seeded stock-tracked SKU');
+    const create = await request(ctx.port, 'POST', '/api/v1/orders', {
+      storeId: 'store-001',
+      terminalId: 'term-001',
+      businessDate: todayBusinessDate(),
+      items: [{ skuId: tracked.skuId, name: tracked.productName, qty: 31, unitPrice: tracked.price }],
+      idempotencyKey: 'stock-atomic-key',
+    }, auth);
+    assert.equal(create.status, 201);
+    const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
+      amount: create.body.grandTotal, paymentMethod: 'CASH', cashReceived: create.body.grandTotal,
+    }, auth);
+    assert.equal(pay.status, 409);
+    assert.equal(pay.body.errorCode, 'OUT_OF_STOCK');
+    const fetched = await request(ctx.port, 'GET', `/api/v1/orders/${create.body.id}`, null, auth);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.paymentState, 'UNPAID');
+    assert.equal(fetched.body.payments.length, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test('void unpaid order returns VOIDED', async () => {
   const ctx = await startTestServer();
   try {

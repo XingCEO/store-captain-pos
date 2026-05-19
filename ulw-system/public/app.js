@@ -318,7 +318,7 @@ async function login(profile = null) {
   const response = await fetch('/api/v1/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-device-id': DEVICE_ID },
-    body: JSON.stringify({ tenantId: $('tenantId').value.trim(), role: $('role').value, storeId: $('storeId').value.trim(), storeName: profile?.name, userName: profile?.user }),
+    body: JSON.stringify({ tenantId: $('tenantId').value.trim(), role: $('role').value, storeId: $('storeId').value.trim(), pin: profile?.pin, storeName: profile?.name, userName: profile?.user }),
   });
   state.session = await parseResponse(response);
   if (profile?.name) state.session.storeName = profile.name;
@@ -1435,7 +1435,7 @@ function bindAuthUI() {
       PosExtras?.toast('登入中…', 'ok');
       run(async () => {
         clearSession();
-        await login({ tenant: 'breakfast-a', store: 'store-001', role: 'MANAGER', name: '晨光早餐店', user: email.split('@')[0] || '店長' });
+        await login({ tenant: 'breakfast-a', store: 'store-001', role: 'MANAGER', pin: '5001', name: '晨光早餐店', user: email.split('@')[0] || '店長' });
         await bootData();
       }, 'orderResult');
     });
@@ -1467,7 +1467,7 @@ function bindAuthUI() {
       PosExtras?.toast('帳號建立中… 進入 14 天免費試用', 'ok');
       run(async () => {
         clearSession();
-        await login({ tenant: 'breakfast-a', store: 'store-001', role: 'MANAGER', name: storeName, user: contact });
+        await login({ tenant: 'breakfast-a', store: 'store-001', role: 'MANAGER', pin: '5001', name: storeName, user: contact });
         await bootData();
       }, 'orderResult');
     });
@@ -1497,7 +1497,7 @@ function bind() {
   bindAuthUI();
   document.querySelectorAll('.profile-button').forEach((button) => button.addEventListener('click', () => run(async () => {
     clearSession();
-    await login({ tenant: button.dataset.tenant, store: button.dataset.store, role: button.dataset.role, name: button.dataset.name, user: button.dataset.user });
+    await login({ tenant: button.dataset.tenant, store: button.dataset.store, role: button.dataset.role, pin: button.dataset.pin, name: button.dataset.name, user: button.dataset.user });
     await bootData();
   }, 'orderResult')));
   document.querySelectorAll('.nav-button').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));

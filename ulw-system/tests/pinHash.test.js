@@ -9,6 +9,10 @@ test('user-created PIN is stored as scrypt hash, not plaintext', async () => {
   try {
     const token = await loginAs(ctx.port, 'pin-hash', 'ADMIN');
     const auth = { Authorization: `Bearer ${token}` };
+    const upgrade = await request(ctx.port, 'POST', '/api/v1/subscription/change', {
+      planCode: 'GROWTH', billingCycle: 'MONTHLY', idempotencyKey: 'pin-growth',
+    }, auth);
+    assert.equal(upgrade.status, 200);
     const create = await request(ctx.port, 'POST', '/api/v1/users', {
       name: '測試員', role: 'CASHIER', pin: '4321',
     }, auth);
