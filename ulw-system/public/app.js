@@ -260,6 +260,26 @@ function friendlyError(error) {
 function saveSession(session) {
   if (session) sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
   else sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  notifySwBearer(session);
+}
+
+// Push the current bearer to the Service Worker so its offline outbox can
+// re-attach the latest token at drain time. Without this, the SW would replay
+// queued mutations with the bearer that was current at queue time, which
+// could be a rotated/expired token.
+function notifySwBearer(session) {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.ready.then((reg) => {
+      const target = navigator.serviceWorker.controller || reg.active;
+      if (!target) return;
+      if (session && session.token) {
+        target.postMessage({ type: 'update-bearer', bearer: `Bearer ${session.token}` });
+      } else {
+        target.postMessage({ type: 'clear-bearer' });
+      }
+    }).catch(() => { /* SW not ready yet — login flow will re-call */ });
+  } catch { /* defensive: SW APIs absent in older browsers */ }
 }
 
 function clearSession() {

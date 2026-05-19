@@ -12,7 +12,7 @@
  * Note on idempotency: the server-side runtime already de-duplicates by `idempotencyKey`
  * and `clientRef`, so replaying queued mutations is safe.
  */
-const VERSION = 'sc-v26';
+const VERSION = 'sc-v27';
 const STATIC_CACHE = 'sc-static-' + VERSION;
 const RUNTIME_CACHE = 'sc-runtime-' + VERSION;
 const SHELL = [
@@ -50,12 +50,45 @@ self.addEventListener('activate', (event) => {
 // ---------------- IndexedDB queue ----------------
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('store-captain-sw', 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
+    const req = indexedDB.open('store-captain-sw', 2);
+    req.onupgradeneeded = (ev) => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('outbox')) {
+        db.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
+      }
+      // v2: `meta` store holds the current bearer (re-attached at drain) and
+      // any future SW-side config. The bearer key is rotated by app.js via
+      // postMessage on every login / refresh.
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'key' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+  });
+}
+function setMeta(db, key, value) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('meta', 'readwrite');
+    tx.objectStore('meta').put({ key, value, updatedAt: Date.now() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+function getMeta(db, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('meta', 'readonly');
+    const req = tx.objectStore('meta').get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+    req.onerror = () => reject(req.error);
+  });
+}
+function deleteMeta(db, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('meta', 'readwrite');
+    tx.objectStore('meta').delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 async function enqueue(payload) {
@@ -97,6 +130,15 @@ const MAX_ATTEMPTS = 6;
 async function drainQueue() {
   const db = await openDb();
   const items = await readAllQueued(db);
+  // Latest known bearer, persisted by app.js on each login / refresh. Drain
+  // attaches this on every replayed request so a token rotated since the
+  // request was queued is honored. Missing bearer means we can't authenticate
+  // — broadcast and stop; the UI will re-prompt for login and re-trigger drain.
+  const bearer = await getMeta(db, 'auth-bearer');
+  if (!bearer) {
+    if (items.length > 0) broadcast({ type: 'queue-auth-expired' });
+    return;
+  }
   let succeeded = 0;
   let dropped = 0;
   for (const item of items) {
@@ -106,9 +148,10 @@ async function drainQueue() {
       continue;
     }
     try {
+      const headers = { ...(item.headers || {}), Authorization: bearer };
       const res = await fetch(item.url, {
         method: item.method,
-        headers: item.headers,
+        headers,
         body: item.body,
       });
       if (res.ok) {
@@ -202,8 +245,16 @@ async function mutateWithQueue(req) {
     // capture body
     let body = null;
     try { body = await req.clone().text(); } catch (_) {}
+    // Strip Authorization from the queued copy. If the queue persists across a
+    // token rotation (refresh / re-login), the stale bearer would 401 the drain
+    // and stall the queue. The current bearer is re-attached at drain time from
+    // the SW's meta store (kept fresh by app.js postMessage). An attacker who
+    // gains XSS access to IndexedDB can't replay a stale bearer either.
     const headers = {};
-    for (const [k, v] of req.headers.entries()) headers[k] = v;
+    for (const [k, v] of req.headers.entries()) {
+      if (k.toLowerCase() === 'authorization') continue;
+      headers[k] = v;
+    }
     await enqueue({ url: req.url, method: req.method, headers, body, queuedAt: Date.now() });
     broadcast({ type: 'queued' });
     return new Response(JSON.stringify({
@@ -229,5 +280,11 @@ self.addEventListener('message', (event) => {
   if (!event.source) return;
   if (event.data && event.data.type === 'drain-now') {
     event.waitUntil(drainQueue());
+  }
+  if (event.data && event.data.type === 'update-bearer' && typeof event.data.bearer === 'string') {
+    event.waitUntil(openDb().then((db) => setMeta(db, 'auth-bearer', event.data.bearer)));
+  }
+  if (event.data && event.data.type === 'clear-bearer') {
+    event.waitUntil(openDb().then((db) => deleteMeta(db, 'auth-bearer')));
   }
 });
