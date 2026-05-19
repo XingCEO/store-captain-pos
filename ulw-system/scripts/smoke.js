@@ -330,6 +330,68 @@ async function runTests() {
     assert.equal(res.body.billing.mode, 'LOCAL_MVP_MANUAL_BILLING');
   });
 
+  // Test 11: Payment providers registry — verifies CARD/QR/MOBILE + CASH wired
+  await test('GET /api/v1/payment-providers returns 4 mock providers', async () => {
+    const res = await request('GET', '/api/v1/payment-providers', null, { Authorization: `Bearer ${token}` });
+    assert.equal(res.status, 200);
+    const codes = (res.body.items || []).map((i) => i.code).sort();
+    assert.deepEqual(codes, ['CASH_DRAWER', 'MOCK_CARD_PSP', 'MOCK_LINE_PAY', 'MOCK_QR_GATEWAY']);
+  });
+
+  // Test 12: CARD payment via provider returns fee + netSettledAmount
+  await test('POST /pay/manual with paymentMethod=CARD returns fee + netSettledAmount', async () => {
+    const now = new Date();
+    const businessDate = now.toISOString().split('T')[0];
+    const orderRes = await request('POST', '/api/v1/orders', {
+      storeId: 'store-001', terminalId: 'term-001', businessDate,
+      items: [{ skuId, name: '招牌奶茶', qty: 2, unitPrice: 100 }],
+      idempotencyKey: `smoke-card-${Date.now()}`,
+    }, { Authorization: `Bearer ${token}` });
+    assert.equal(orderRes.status, 201);
+    const pay = await request('POST', `/api/v1/orders/${orderRes.body.id}/pay/manual`, {
+      amount: 200, paymentMethod: 'CARD', cashReceived: 200,
+    }, { Authorization: `Bearer ${token}` });
+    assert.equal(pay.status, 200);
+    assert.equal(pay.body.paymentSummary.paymentProvider, 'MOCK_CARD_PSP');
+    assert.equal(pay.body.paymentSummary.fee, 4);
+    assert.equal(pay.body.paymentSummary.netSettledAmount, 196);
+  });
+
+  // Test 13: Refresh token rotation issues new bearer
+  await test('POST /api/v1/auth/refresh rotates session', async () => {
+    const login = await request('POST', '/api/v1/auth/login', { tenantId, role: 'MANAGER', storeId: 'store-001', pin: '5001' });
+    assert.equal(login.status, 200);
+    assert.ok(login.body.refreshToken, 'login must return refreshToken');
+    const refresh = await request('POST', '/api/v1/auth/refresh', { refreshToken: login.body.refreshToken });
+    assert.equal(refresh.status, 200);
+    assert.notEqual(refresh.body.token, login.body.token);
+    assert.notEqual(refresh.body.refreshToken, login.body.refreshToken);
+  });
+
+  // Test 14: /health/ready reports DB + worker check
+  await test('GET /health/ready returns sqlite ok + worker check', async () => {
+    const res = await request('GET', '/health/ready');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.checks.sqlite.ok, true);
+    assert.ok('worker' in res.body.checks);
+  });
+
+  // Test 15: Reports export — requires Growth plan; Starter must return feature-gate
+  await test('POST /api/v1/reports/exports gated by plan; checksum on success', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await request('POST', '/api/v1/reports/exports', {
+      reportType: 'daily', from: `${today}T00:00:00Z`, to: `${today}T23:59:59Z`, storeIds: ['store-001'], format: 'JSON',
+    }, { Authorization: `Bearer ${token}` });
+    if (res.status === 200) {
+      assert.equal(res.body.state, 'READY');
+      assert.ok(res.body.checksum.startsWith('sha256:'));
+    } else if (res.status === 403) {
+      assert.equal(res.body.errorCode, 'SUBSCRIPTION_FEATURE_NOT_INCLUDED', `unexpected 403 body: ${JSON.stringify(res.body)}`);
+    } else {
+      throw new Error(`unexpected status ${res.status}`);
+    }
+  });
+
   console.log(`\nRESULTS: ${passed} passed / ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }
