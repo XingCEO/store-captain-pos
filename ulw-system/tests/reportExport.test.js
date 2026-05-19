@@ -23,8 +23,19 @@ test('report export download token is cryptographically strong hex', async () =>
     assert.equal(create.status, 200);
     const meta = await request(ctx.port, 'GET', `/api/v1/reports/exports/${create.body.export_id}`, null, auth);
     assert.equal(meta.status, 200);
+    // Download token is now returned separately and consumed via the
+    // X-Download-Token header — never embedded in the URL.
+    assert.equal(typeof meta.body.download_token, 'string');
+    assert.match(meta.body.download_token, /^[0-9a-f]{64}$/);
     const url = new URL(meta.body.download_url, 'http://localhost');
-    assert.match(url.searchParams.get('token'), /^[0-9a-f]{64}$/);
+    assert.equal(url.searchParams.get('token'), null);
+    // The download endpoint rejects without the header.
+    const denied = await request(ctx.port, 'GET', meta.body.download_url, null, auth);
+    assert.equal(denied.status, 403);
+    // ...and accepts with the header.
+    const allowed = await request(ctx.port, 'GET', meta.body.download_url, null,
+      { ...auth, 'X-Download-Token': meta.body.download_token });
+    assert.equal(allowed.status, 200);
   } finally {
     await stopTestServer(ctx);
   }

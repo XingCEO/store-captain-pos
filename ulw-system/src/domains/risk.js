@@ -386,14 +386,42 @@ function register(router, runtime) {
     for (const sid of (record.storeIds || [])) {
       if (!runtime.requireStoreScope(res, ctx, sid)) return;
     }
-    runtime.json(res, 200, { id: record.id || params[0], report_type: record.reportType, state: record.state, rows: record.rows, checksum: record.checksum, expires_at: record.expiresAt, download_url: `/api/v1/reports/exports/${params[0]}/download?token=${record.token}` });
+    // Token MUST be passed via `Authorization: Bearer <download_token>` to the
+    // download endpoint. Never embed it in the URL — proxy logs and the
+    // browser's Referer header would otherwise leak it.
+    runtime.json(res, 200, {
+      id: record.id || params[0],
+      report_type: record.reportType,
+      state: record.state,
+      rows: record.rows,
+      checksum: record.checksum,
+      expires_at: record.expiresAt,
+      download_url: `/api/v1/reports/exports/${params[0]}/download`,
+      download_token: record.token,
+      download_token_header: 'Authorization: Bearer <download_token>',
+    });
   });
 
-  router.add('GET', /^\/api\/v1\/reports\/exports\/([\w-]+)\/download$/, async ({ res, ctx, params, url }) => {
+  router.add('GET', /^\/api\/v1\/reports\/exports\/([\w-]+)\/download$/, async ({ req, res, ctx, params }) => {
     if (!runtime.requireTenant(res, ctx)) return;
     if (!requireFeature(runtime, res, ctx, 'ACCOUNTING_REPORTS')) return;
     const record = store.data.reportExports.get(params[0]);
-    if (!record || record.tenantId !== ctx.tenantId || url.searchParams.get('token') !== record.token) {
+    if (!record || record.tenantId !== ctx.tenantId) {
+      runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'download token invalid'));
+      return;
+    }
+    // Header-only token check, constant-time compare. Note: req.headers
+    // already carries the user's session bearer (used by requireTenant via
+    // ctx); the download token rides as a separate "X-Download-Token" header
+    // so we don't conflict with the session bearer.
+    const provided = String(req.headers['x-download-token'] || '');
+    if (!provided) {
+      runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'X-Download-Token header required'));
+      return;
+    }
+    const a = Buffer.from(provided);
+    const b = Buffer.from(record.token || '');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'download token invalid'));
       return;
     }
@@ -401,6 +429,7 @@ function register(router, runtime) {
       runtime.json(res, 410, runtime.error('FILE_EXPIRED', 'export has expired'));
       return;
     }
+    res.setHeader('Referrer-Policy', 'no-referrer');
     // Re-derive rows array for streaming
     const rowsArray = [...store.data.orders.values()].filter((order) =>
       order.tenantId === ctx.tenantId &&

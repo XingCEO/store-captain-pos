@@ -36,12 +36,14 @@ test('client-supplied correlationId is ignored by server', async () => {
       correlationId: 'attacker-injected-id',
     }, auth);
     assert.equal(pay.status, 200);
-    // Fetch the order; payment correlation id should be server-generated `corr-payment-XXXX`
+    // Fetch the order; payment correlation id should be server-generated and
+    // start with `corr-payment-` (the suffix is random base64url for
+    // non-enumerable ids, see runtime.nextId).
     const ord = await request(ctx.port, 'GET', `/api/v1/orders/${create.body.id}`, null, auth);
     assert.equal(ord.status, 200);
     const payment = ord.body.payments[0];
     assert.notEqual(payment.correlationId, 'attacker-injected-id');
-    assert.match(payment.correlationId, /^corr-payment-\d+$/);
+    assert.match(payment.correlationId, /^corr-payment-[A-Za-z0-9_-]+$/);
   } finally {
     await stopTestServer(ctx);
   }

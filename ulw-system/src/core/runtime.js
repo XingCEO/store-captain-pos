@@ -213,9 +213,14 @@ class Store {
   }
 
   nextId(prefix) {
-    const id = `${prefix}-${String(this.counters[prefix]).padStart(4, '0')}`;
+    // Non-enumerable IDs. Old short ids (`order-0001`) remain readable for
+    // existing rows because Map keys are exact-match strings; new writes get
+    // 12 chars of base64url entropy (~72 bits) so order/invoice/customer
+    // identifiers cannot be guessed or enumerated across tenants. Counters
+    // are still bumped for internal accounting + persistence compat.
     this.counters[prefix] += 1;
-    return id;
+    const suffix = crypto.randomBytes(9).toString('base64url').slice(0, 12);
+    return `${prefix}-${suffix}`;
   }
 
   load() {
