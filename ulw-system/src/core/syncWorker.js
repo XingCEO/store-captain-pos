@@ -293,6 +293,7 @@ function start(runtime, options = {}) {
   const outboxTimer = setInterval(() => {
     try {
       const changed = tickOutbox(store);
+      store.workerLastTickAt = nowIso();
       if (changed) store.persist();
       logger.debug({ changed }, 'syncWorker outbox tick');
     } catch (err) {

@@ -1,6 +1,38 @@
 const { roleRank } = require('../core/runtime');
 const { hashPin, verifyPin, hashToken, generateSessionToken } = require('../core/security');
 const { requireCurrentPlanCapacity } = require('../core/entitlements');
+const mfa = require('../core/mfa');
+
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 d
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;            // 12 h
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;            // 5 min
+const MFA_LOCKOUT_MAX_FAILURES = 5;
+
+// In-memory MFA challenge store — short-lived (5 min). Reboot wipes them,
+// forcing re-login, which is correct behavior.
+const mfaChallenges = new Map();
+const mfaAttempts = new Map();
+
+function mfaUserKey(tenantId, userId) {
+  return `${String(tenantId).toLowerCase()}:${String(userId).toLowerCase()}`;
+}
+function checkMfaLockout(key) {
+  const entry = mfaAttempts.get(key);
+  if (!entry) return false;
+  if (entry.attempts >= MFA_LOCKOUT_MAX_FAILURES) return true;
+  return false;
+}
+function recordMfaFailure(key) {
+  const entry = mfaAttempts.get(key) || { attempts: 0 };
+  mfaAttempts.set(key, { attempts: entry.attempts + 1, lastFailedAt: Date.now() });
+}
+function clearMfaFailures(key) {
+  mfaAttempts.delete(key);
+}
+function resetMfaState() {
+  mfaChallenges.clear();
+  mfaAttempts.clear();
+}
 
 // In-memory lockout state — intentionally not persisted; resets on restart.
 // Keyed by both per-IP and per-userId/tenant to defeat IP rotation.
@@ -140,9 +172,8 @@ function register(router, runtime) {
     clearLockout(ipKey);
     clearLockout(userKey);
 
-    const token = generateSessionToken();
-    const tokenHash = hashToken(token);
-    const at = runtime.nowIso();
+    // Resolve store scope before MFA gate so we can fail-fast and so the
+    // challenge payload carries the correct storeName.
     const selectedStore = store.data.stores.get(`${tenantId}:${storeId}`);
     const allowedStoreIds = Array.isArray(user.storeIds) ? user.storeIds : [];
     if (!selectedStore || selectedStore.status === 'DISABLED' || (allowedStoreIds.length > 0 && !allowedStoreIds.includes(storeId))) {
@@ -152,6 +183,40 @@ function register(router, runtime) {
       runtime.json(res, 403, runtime.error('TENANT_NOT_AUTHORIZED', 'store not allowed for user'));
       return;
     }
+
+    // MFA gate — if user has MFA enrolled, do NOT issue a session yet.
+    // Return a short-lived challenge token. Client posts code to
+    // /api/v1/auth/mfa/challenge with this token to receive the bearer.
+    if (user.mfaEnabled && user.mfaSecret) {
+      const challengeToken = generateSessionToken();
+      const challengeHash = hashToken(challengeToken);
+      mfaChallenges.set(challengeHash, {
+        tenantId,
+        userId: user.id,
+        storeId,
+        userName: body.userName || user.name,
+        storeName: body.storeName || selectedStore?.name || storeId,
+        deviceId: req.headers['x-device-id'] || 'unknown',
+        userAgent: req.headers['user-agent'] || '',
+        expiresAt: Date.now() + MFA_CHALLENGE_TTL_MS,
+      });
+      runtime.addAudit(
+        { tenantId, userId: user.id, role: user.role, ip, deviceId: req.headers['x-device-id'] || 'unknown', userAgent: req.headers['user-agent'] || '' },
+        'AUTH_MFA_CHALLENGE_ISSUED', 'user', user.id, null, { storeId }
+      );
+      runtime.json(res, 200, {
+        mfaRequired: true,
+        challengeToken,
+        challengeExpiresAt: new Date(Date.now() + MFA_CHALLENGE_TTL_MS).toISOString(),
+      });
+      return;
+    }
+
+    const token = generateSessionToken();
+    const tokenHash = hashToken(token);
+    const refreshToken = generateSessionToken();
+    const refreshHash = hashToken(refreshToken);
+    const at = runtime.nowIso();
     const session = {
       tenantId,
       userId: user.id,
@@ -163,17 +228,295 @@ function register(router, runtime) {
       deviceId: req.headers['x-device-id'] || 'unknown',
       createdAt: at,
       lastSeenAt: at,
-      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
     };
     // Store sessions keyed by token HASH — plain token never persists.
     store.data.sessions.set(tokenHash, session);
+    // Refresh tokens form a family per device. Reuse of a rotated token
+    // triggers family revocation. Same hash-only persistence.
+    store.data.refreshTokens.set(refreshHash, {
+      tenantId,
+      userId: user.id,
+      sessionHash: tokenHash,
+      deviceId: session.deviceId,
+      family: refreshHash, // first token is the family root
+      used: false,
+      replacedBy: null,
+      createdAt: at,
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
+    });
     runtime.addAudit(
       { tenantId, userId: user.id, role: user.role, ip, deviceId: session.deviceId, userAgent: req.headers['user-agent'] || '' },
       'AUTH_LOGIN_SUCCESS', 'user', user.id,
       null,
       { ip, attempts: 0, role: user.role, storeId }
     );
-    runtime.json(res, 200, runtime.sessionResponse(session, token));
+    const payload = runtime.sessionResponse(session, token);
+    payload.refreshToken = refreshToken;
+    payload.refreshExpiresAt = store.data.refreshTokens.get(refreshHash).expiresAt;
+    runtime.json(res, 200, payload);
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/auth/refresh — rotate session + refresh token
+  // Reuse of a previously-rotated refresh token revokes the entire family
+  // (every session that descended from this refresh root). This catches
+  // stolen refresh tokens after the legitimate client has rotated.
+  // ---------------------------------------------------------------------------
+  router.add('POST', '/api/v1/auth/refresh', async ({ req, res }) => {
+    let body;
+    try { body = await runtime.parseBody(req); }
+    catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
+    const raw = String(body.refreshToken || '').trim();
+    if (!raw) { runtime.json(res, 400, runtime.error('REFRESH_TOKEN_INVALID', 'refreshToken required')); return; }
+    const presentedHash = hashToken(raw);
+    const record = store.data.refreshTokens.get(presentedHash);
+    if (!record) {
+      runtime.json(res, 401, runtime.error('REFRESH_TOKEN_INVALID', 'unknown refresh token'));
+      return;
+    }
+    if (new Date(record.expiresAt).getTime() <= Date.now()) {
+      store.data.refreshTokens.delete(presentedHash);
+      runtime.json(res, 401, runtime.error('REFRESH_TOKEN_EXPIRED', 'refresh token expired'));
+      return;
+    }
+    if (record.used) {
+      // Reuse detected — revoke the entire family + tear down associated sessions.
+      const family = record.family;
+      let revoked = 0;
+      for (const [hash, r] of [...store.data.refreshTokens.entries()]) {
+        if (r.family === family) {
+          if (r.sessionHash) store.data.sessions.delete(r.sessionHash);
+          store.data.refreshTokens.delete(hash);
+          revoked += 1;
+        }
+      }
+      runtime.addAudit(
+        { tenantId: record.tenantId, userId: record.userId, role: 'GUEST', ip: req.socket.remoteAddress || '0.0.0.0', deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
+        'AUTH_REFRESH_REUSE_DETECTED', 'refresh_token', record.family,
+        { used: true }, { revoked, family }
+      );
+      runtime.json(res, 401, runtime.error('REFRESH_TOKEN_REUSED', 'refresh token reused — family revoked', { revoked }));
+      return;
+    }
+
+    // Look up the existing session this refresh belongs to so we can carry forward
+    // store/role context.
+    const oldSession = store.data.sessions.get(record.sessionHash);
+    if (!oldSession) {
+      // Session evicted (TTL), but refresh token is still valid — re-issue.
+    }
+    const user = [...store.data.users.values()].find((u) => u.tenantId === record.tenantId && u.id === record.userId && u.status !== 'DISABLED');
+    if (!user) {
+      runtime.json(res, 401, runtime.error('REFRESH_TOKEN_INVALID', 'user no longer active'));
+      return;
+    }
+
+    // Rotate: issue new bearer + new refresh, mark old refresh as used.
+    const newToken = generateSessionToken();
+    const newTokenHash = hashToken(newToken);
+    const newRefresh = generateSessionToken();
+    const newRefreshHash = hashToken(newRefresh);
+    const at = runtime.nowIso();
+    const storeId = oldSession ? oldSession.storeId : user.storeIds && user.storeIds[0] || 'store-001';
+    const selectedStore = store.data.stores.get(`${record.tenantId}:${storeId}`);
+    const newSession = {
+      tenantId: record.tenantId,
+      userId: user.id,
+      userName: user.name,
+      role: user.role,
+      storeId,
+      storeName: selectedStore?.name || storeId,
+      storeIds: Array.isArray(user.storeIds) && user.storeIds.length > 0 ? user.storeIds : [storeId],
+      deviceId: record.deviceId,
+      createdAt: at,
+      lastSeenAt: at,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    };
+    store.data.sessions.set(newTokenHash, newSession);
+    // Old session must be invalidated so a stolen bearer dies on next request.
+    if (record.sessionHash) store.data.sessions.delete(record.sessionHash);
+    // Mark old refresh used + chain it to the new refresh for reuse detection.
+    store.data.refreshTokens.set(presentedHash, { ...record, used: true, replacedBy: newRefreshHash });
+    store.data.refreshTokens.set(newRefreshHash, {
+      tenantId: record.tenantId,
+      userId: user.id,
+      sessionHash: newTokenHash,
+      deviceId: record.deviceId,
+      family: record.family,
+      used: false,
+      replacedBy: null,
+      createdAt: at,
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
+    });
+    runtime.addAudit(
+      { tenantId: record.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
+      'AUTH_REFRESH_SUCCESS', 'session', newTokenHash,
+      { sessionHash: record.sessionHash }, { sessionHash: newTokenHash }
+    );
+    const payload = runtime.sessionResponse(newSession, newToken);
+    payload.refreshToken = newRefresh;
+    payload.refreshExpiresAt = store.data.refreshTokens.get(newRefreshHash).expiresAt;
+    runtime.json(res, 200, payload);
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/auth/mfa/enroll
+  // Authenticated. Returns a fresh secret + provisioning URI. Server stores
+  // the secret as PENDING until /mfa/verify confirms a valid code. Re-enroll
+  // before verify is allowed; re-enroll after verify is rejected.
+  // ---------------------------------------------------------------------------
+  router.add('POST', '/api/v1/auth/mfa/enroll', async ({ res, ctx }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    const key = `${ctx.tenantId}:${ctx.userId}`;
+    const current = store.data.users.get(key);
+    if (!current) { runtime.json(res, 404, runtime.error('USER_NOT_FOUND', 'user not found')); return; }
+    if (current.mfaEnabled) {
+      runtime.json(res, 409, runtime.error('MFA_ALREADY_ENROLLED', 'MFA already enrolled — disable first'));
+      return;
+    }
+    const secret = mfa.generateSecret();
+    const next = { ...current, mfaSecret: secret, mfaEnabled: false, mfaEnrollStartedAt: runtime.nowIso(), updatedAt: runtime.nowIso() };
+    store.data.users.set(key, next);
+    runtime.addAudit(ctx, 'AUTH_MFA_ENROLL_STARTED', 'user', ctx.userId, null, { mfaEnabled: false });
+    const label = `${current.email || ctx.userId}@${ctx.tenantId}`;
+    runtime.json(res, 200, {
+      secret,
+      provisioningUri: mfa.provisioningUri(label, secret),
+      digits: 6,
+      period: 30,
+      algorithm: 'SHA1',
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/auth/mfa/verify
+  // Authenticated. body.code (6 digits). Confirms enrollment — sets
+  // user.mfaEnabled=true. Future logins gate on /mfa/challenge.
+  // ---------------------------------------------------------------------------
+  router.add('POST', '/api/v1/auth/mfa/verify', async ({ req, res, ctx }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    const body = await runtime.parseBody(req).catch(() => ({}));
+    const code = String(body.code || '').trim();
+    const key = `${ctx.tenantId}:${ctx.userId}`;
+    const user = store.data.users.get(key);
+    if (!user || !user.mfaSecret) { runtime.json(res, 400, runtime.error('MFA_INVALID', 'no enrollment in progress')); return; }
+    if (user.mfaEnabled) { runtime.json(res, 409, runtime.error('MFA_ALREADY_ENROLLED', 'already enrolled')); return; }
+    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+      runtime.addAudit(ctx, 'AUTH_MFA_VERIFY_FAILED', 'user', ctx.userId, null, { reason: 'invalid_code' });
+      runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
+      return;
+    }
+    const next = { ...user, mfaEnabled: true, mfaEnrolledAt: runtime.nowIso(), updatedAt: runtime.nowIso() };
+    store.data.users.set(key, next);
+    runtime.addAudit(ctx, 'AUTH_MFA_ENROLLED', 'user', ctx.userId, { mfaEnabled: false }, { mfaEnabled: true });
+    runtime.json(res, 200, { mfaEnabled: true, enrolledAt: next.mfaEnrolledAt });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/auth/mfa/challenge
+  // Unauthenticated. body.challengeToken (issued by /login when MFA gate hit)
+  // + body.code (6 digits). Mints bearer + refresh on success.
+  // ---------------------------------------------------------------------------
+  router.add('POST', '/api/v1/auth/mfa/challenge', async ({ req, res }) => {
+    let body;
+    try { body = await runtime.parseBody(req); }
+    catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
+    const challengeToken = String(body.challengeToken || '').trim();
+    const code = String(body.code || '').trim();
+    if (!challengeToken || !code) { runtime.json(res, 400, runtime.error('MFA_INVALID', 'challengeToken and code required')); return; }
+    const challengeHash = hashToken(challengeToken);
+    const challenge = mfaChallenges.get(challengeHash);
+    if (!challenge || challenge.expiresAt < Date.now()) {
+      mfaChallenges.delete(challengeHash);
+      runtime.json(res, 401, runtime.error('MFA_INVALID', 'challenge expired or unknown'));
+      return;
+    }
+    const lockoutKey = mfaUserKey(challenge.tenantId, challenge.userId);
+    if (checkMfaLockout(lockoutKey)) {
+      runtime.json(res, 429, runtime.error('LOGIN_RATE_LIMITED', 'too many MFA failures, retry later'));
+      return;
+    }
+    const user = store.data.users.get(`${challenge.tenantId}:${challenge.userId}`);
+    if (!user || !user.mfaEnabled || !user.mfaSecret) {
+      runtime.json(res, 401, runtime.error('MFA_INVALID', 'user no longer requires MFA'));
+      return;
+    }
+    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+      recordMfaFailure(lockoutKey);
+      runtime.addAudit(
+        { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
+        'AUTH_MFA_CHALLENGE_FAILED', 'user', user.id, null, { reason: 'invalid_code' }
+      );
+      runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
+      return;
+    }
+    // Success — consume the challenge, mint session + refresh.
+    mfaChallenges.delete(challengeHash);
+    clearMfaFailures(lockoutKey);
+    const token = generateSessionToken();
+    const tokenHash = hashToken(token);
+    const refreshToken = generateSessionToken();
+    const refreshHash = hashToken(refreshToken);
+    const at = runtime.nowIso();
+    const selectedStore = store.data.stores.get(`${challenge.tenantId}:${challenge.storeId}`);
+    const session = {
+      tenantId: challenge.tenantId,
+      userId: user.id,
+      userName: challenge.userName || user.name,
+      role: user.role,
+      storeId: challenge.storeId,
+      storeName: challenge.storeName || selectedStore?.name || challenge.storeId,
+      storeIds: Array.isArray(user.storeIds) && user.storeIds.length > 0 ? user.storeIds : [challenge.storeId],
+      deviceId: challenge.deviceId,
+      createdAt: at,
+      lastSeenAt: at,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    };
+    store.data.sessions.set(tokenHash, session);
+    store.data.refreshTokens.set(refreshHash, {
+      tenantId: challenge.tenantId,
+      userId: user.id,
+      sessionHash: tokenHash,
+      deviceId: challenge.deviceId,
+      family: refreshHash,
+      used: false,
+      replacedBy: null,
+      createdAt: at,
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
+    });
+    runtime.addAudit(
+      { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
+      'AUTH_LOGIN_MFA_SUCCESS', 'user', user.id, null, { storeId: challenge.storeId }
+    );
+    const payload = runtime.sessionResponse(session, token);
+    payload.refreshToken = refreshToken;
+    payload.refreshExpiresAt = store.data.refreshTokens.get(refreshHash).expiresAt;
+    runtime.json(res, 200, payload);
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/auth/mfa/disable — actor disables their own MFA. Requires
+  // confirming the current TOTP code (proof of possession) before unsetting.
+  // ---------------------------------------------------------------------------
+  router.add('POST', '/api/v1/auth/mfa/disable', async ({ req, res, ctx }) => {
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
+    const body = await runtime.parseBody(req).catch(() => ({}));
+    const code = String(body.code || '').trim();
+    const key = `${ctx.tenantId}:${ctx.userId}`;
+    const user = store.data.users.get(key);
+    if (!user || !user.mfaEnabled || !user.mfaSecret) {
+      runtime.json(res, 400, runtime.error('MFA_INVALID', 'MFA not enabled'));
+      return;
+    }
+    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+      runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
+      return;
+    }
+    const next = { ...user, mfaEnabled: false, mfaSecret: null, mfaEnrolledAt: null, updatedAt: runtime.nowIso() };
+    store.data.users.set(key, next);
+    runtime.addAudit(ctx, 'AUTH_MFA_DISABLED', 'user', ctx.userId, { mfaEnabled: true }, { mfaEnabled: false });
+    runtime.json(res, 200, { mfaEnabled: false });
   });
 
   // ---------------------------------------------------------------------------
@@ -198,6 +541,10 @@ function register(router, runtime) {
     if (session) {
       store.data.sessions.delete(ctx.sessionId);
       runtime.addAudit(ctx, 'auth.logout', 'SESSION', ctx.sessionId, session, null);
+    }
+    // Revoke all refresh tokens pointing at this session — no zombie refreshes.
+    for (const [hash, r] of [...store.data.refreshTokens.entries()]) {
+      if (r.sessionHash === ctx.sessionId) store.data.refreshTokens.delete(hash);
     }
     runtime.json(res, 200, { ok: true });
   });
@@ -461,4 +808,4 @@ function register(router, runtime) {
   });
 }
 
-module.exports = { register, resetLockouts };
+module.exports = { register, resetLockouts, resetMfaState };

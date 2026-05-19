@@ -19,8 +19,47 @@ function createRouter(runtime) {
       return;
     }
 
-    if (req.method === 'GET' && normalizedPath === '/health') {
-      runtime.json(res, 200, { ok: true, service: 'store-captain-pos', architecture: 'modular-domain-runtime', time: runtime.nowIso() });
+    if (req.method === 'GET' && (normalizedPath === '/health' || normalizedPath === '/health/live' || normalizedPath === '/health/ready')) {
+      const liveOnly = normalizedPath === '/health/live';
+      const readyMode = normalizedPath === '/health/ready';
+      const startTs = process.hrtime.bigint();
+      const checks = {};
+      // SQLite ping — single SELECT round-trip.
+      try {
+        runtime.store.db.prepare('SELECT 1 AS ok').get();
+        checks.sqlite = { ok: true };
+      } catch (err) {
+        checks.sqlite = { ok: false, error: err.message };
+      }
+      // Audit PG mirror (optional).
+      try {
+        if (runtime.auditPg && runtime.auditPg.isEnabled && runtime.auditPg.isEnabled()) {
+          checks.auditPg = { ok: true, enabled: true };
+        } else {
+          checks.auditPg = { ok: true, enabled: false };
+        }
+      } catch (err) {
+        checks.auditPg = { ok: false, error: err.message };
+      }
+      // Worker freshness — sync worker stamps lastTickAt on the store after each tick.
+      const lastTickIso = runtime.store.workerLastTickAt || null;
+      const tickAgeSeconds = lastTickIso ? Math.floor((Date.now() - new Date(lastTickIso).getTime()) / 1000) : null;
+      checks.worker = { lastTickAt: lastTickIso, ageSeconds: tickAgeSeconds };
+      const queryMs = Number(process.hrtime.bigint() - startTs) / 1e6;
+      const ok = checks.sqlite.ok && (!readyMode || (tickAgeSeconds === null || tickAgeSeconds < 600));
+      const payload = liveOnly
+        ? { ok: true, time: runtime.nowIso() }
+        : {
+          ok,
+          service: 'store-captain-pos',
+          architecture: 'modular-domain-runtime',
+          time: runtime.nowIso(),
+          uptimeSeconds: Math.floor(process.uptime()),
+          memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+          checks,
+          queryMs: Math.round(queryMs * 100) / 100,
+        };
+      runtime.json(res, ok ? 200 : 503, payload);
       return;
     }
 

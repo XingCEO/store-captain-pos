@@ -35,7 +35,7 @@ const persistedMaps = [
   'inventoryLevels', 'inventoryLedger', 'stockCounts', 'transferOrders', 'purchaseOrders',
   'recipes', 'recipeItems',
   'idempotency', 'orderIdempotency',
-  'sessions',
+  'sessions', 'refreshTokens',
 ];
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24h
