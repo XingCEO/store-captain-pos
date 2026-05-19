@@ -1232,6 +1232,41 @@ async function sendHeartbeat() {
 async function loadTelemetry() { show('telemetryResult', await api(`/api/v1/telemetry/dashboard?storeId=${encodeURIComponent($('storeId').value)}`)); }
 async function loadAudit() { show('auditResult', await api('/api/v1/audit-logs?page=1&pageSize=20')); }
 
+async function loadSubscription() {
+  const data = await api('/api/v1/subscription/current');
+  if (data && data.errorCode) { show('subscriptionResult', data); return; }
+  // Compact summary — plan, period, usage, entitlements
+  const summary = {
+    planCode: data.planCode,
+    status: data.status,
+    billingCycle: data.billingCycle,
+    paymentState: data.paymentState,
+    currentPeriodStart: data.currentPeriodStart,
+    currentPeriodEnd: data.currentPeriodEnd,
+    seats: `${data.usage && data.usage.activeSeats}/${data.limits && data.limits.seatLimit === null ? '∞' : (data.limits && data.limits.seatLimit)}`,
+    stores: `${data.usage && data.usage.activeStores}/${data.limits && data.limits.storeLimit === null ? '∞' : (data.limits && data.limits.storeLimit)}`,
+    entitlements: data.entitlements,
+    billingNote: data.billing && data.billing.note,
+  };
+  show('subscriptionResult', summary);
+}
+
+async function changeSubscription(planCode) {
+  const result = await api('/api/v1/subscription/change', {
+    method: 'POST',
+    body: JSON.stringify({ planCode, billingCycle: 'MONTHLY', idempotencyKey: `change-${planCode}-${Date.now()}` }),
+  });
+  show('subscriptionResult', result);
+}
+
+async function cancelSubscriptionRequest() {
+  const result = await api('/api/v1/subscription/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ reasonCode: 'OWNER_REQUEST', idempotencyKey: `cancel-${Date.now()}` }),
+  });
+  show('subscriptionResult', result);
+}
+
 // ---- new feature wiring --------------------------------------------------
 function openScannerForSearch() {
   if (!window.PosExtras) return;
@@ -1562,6 +1597,10 @@ function bind() {
   $('sendHeartbeat').addEventListener('click', () => run(sendHeartbeat, 'telemetryResult'));
   $('loadTelemetry').addEventListener('click', () => run(loadTelemetry, 'telemetryResult'));
   $('loadAudit').addEventListener('click', () => run(loadAudit, 'auditResult'));
+  if ($('loadSubscription')) $('loadSubscription').addEventListener('click', () => run(loadSubscription, 'subscriptionResult'));
+  if ($('upgradeGrowth')) $('upgradeGrowth').addEventListener('click', () => run(() => changeSubscription('GROWTH'), 'subscriptionResult'));
+  if ($('upgradeChain')) $('upgradeChain').addEventListener('click', () => run(() => changeSubscription('CHAIN'), 'subscriptionResult'));
+  if ($('cancelSubscription')) $('cancelSubscription').addEventListener('click', () => run(cancelSubscriptionRequest, 'subscriptionResult'));
 
   // -- extras --
   const scanBtn = $('scanButton');

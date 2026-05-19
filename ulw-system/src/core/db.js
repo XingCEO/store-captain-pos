@@ -5,7 +5,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const metrics = require('./metrics');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function openDatabase(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -48,12 +48,41 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS audit_logs_tenant_idx ON audit_logs(tenant_id, timestamp DESC);
     CREATE INDEX IF NOT EXISTS audit_logs_tenant_action_idx ON audit_logs(tenant_id, action, timestamp DESC);
     CREATE INDEX IF NOT EXISTS audit_logs_tenant_resource_idx ON audit_logs(tenant_id, resource_type, timestamp DESC);
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      key TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      namespace TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idempotency_created_idx ON idempotency_keys(created_at);
+    CREATE INDEX IF NOT EXISTS idempotency_tenant_idx ON idempotency_keys(tenant_id);
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      store_id TEXT,
+      payload_json TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS auth_sessions_tenant_idx ON auth_sessions(tenant_id);
   `);
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
+  const prev = row ? Number(row.value) : 0;
   if (!row) {
     db.prepare('INSERT INTO meta(key, value) VALUES (?, ?)')
       .run('schema_version', String(SCHEMA_VERSION));
-  } else if (Number(row.value) < SCHEMA_VERSION) {
+  } else if (prev < SCHEMA_VERSION) {
+    // v2 → v3: idempotency + sessions moved out of the snapshot blob into
+    // their own indexed tables. Clear the stale blob copies on first boot
+    // so we don't double-hydrate from snapshot + table.
+    if (prev < 3) {
+      db.prepare("DELETE FROM state WHERE name IN ('idempotency', 'orderIdempotency', 'sessions', 'refreshTokens')").run();
+    }
     db.prepare('UPDATE meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
   }
 }
@@ -171,8 +200,100 @@ function closeDatabase(db) {
   try { db.close(); } catch { /* already closed */ }
 }
 
+// ---------------------------------------------------------------------------
+// Idempotency-key store (SQLite-backed, indexed, TTL-pruneable)
+// ---------------------------------------------------------------------------
+function idempotencyGet(db, key) {
+  return timed('idempotency_get', () => {
+    const row = db.prepare('SELECT fingerprint, response_json, created_at FROM idempotency_keys WHERE key = ?').get(key);
+    if (!row) return undefined;
+    try {
+      return { fingerprint: row.fingerprint, response: JSON.parse(row.response_json), createdAt: new Date(row.created_at).toISOString() };
+    } catch { return undefined; }
+  });
+}
+function idempotencyPut(db, key, value, { tenantId = null, namespace = 'default' } = {}) {
+  return timed('idempotency_put', () => {
+    db.prepare(`
+      INSERT INTO idempotency_keys(key, tenant_id, namespace, fingerprint, response_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        fingerprint = excluded.fingerprint,
+        response_json = excluded.response_json,
+        created_at = excluded.created_at
+    `).run(key, tenantId, namespace, value.fingerprint, JSON.stringify(value.response || value), Date.now());
+  });
+}
+function idempotencyDelete(db, key) {
+  return timed('idempotency_delete', () => {
+    db.prepare('DELETE FROM idempotency_keys WHERE key = ?').run(key);
+  });
+}
+function idempotencyPrune(db, ttlMs) {
+  return timed('idempotency_prune', () => {
+    const cutoff = Date.now() - ttlMs;
+    const result = db.prepare('DELETE FROM idempotency_keys WHERE created_at < ?').run(cutoff);
+    return result.changes;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Session store (SQLite-backed, indexed, TTL-pruneable, multi-worker safe)
+// ---------------------------------------------------------------------------
+function sessionGet(db, tokenHash) {
+  return timed('session_get', () => {
+    const row = db.prepare('SELECT payload_json, expires_at FROM auth_sessions WHERE token_hash = ?').get(tokenHash);
+    if (!row) return undefined;
+    if (row.expires_at <= Date.now()) {
+      db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
+      return undefined;
+    }
+    try { return JSON.parse(row.payload_json); } catch { return undefined; }
+  });
+}
+function sessionPut(db, tokenHash, session) {
+  return timed('session_put', () => {
+    const expiresAt = new Date(session.expiresAt).getTime();
+    // Refresh-token records do not carry a role — coalesce so the NOT NULL
+    // constraint is satisfied and the row stays distinguishable from a true
+    // session row (which always has user_role like CASHIER / MANAGER / etc).
+    db.prepare(`
+      INSERT INTO auth_sessions(token_hash, tenant_id, user_id, role, store_id, payload_json, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token_hash) DO UPDATE SET
+        payload_json = excluded.payload_json,
+        expires_at = excluded.expires_at
+    `).run(
+      tokenHash,
+      session.tenantId || 'unknown',
+      session.userId || 'unknown',
+      session.role || 'REFRESH',
+      session.storeId || null,
+      JSON.stringify(session),
+      expiresAt,
+      Date.now(),
+    );
+  });
+}
+function sessionDelete(db, tokenHash) {
+  return timed('session_delete', () => {
+    db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
+  });
+}
+function sessionPrune(db) {
+  return timed('session_prune', () => {
+    const result = db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(Date.now());
+    return result.changes;
+  });
+}
+function sessionCount(db) {
+  return db.prepare('SELECT COUNT(*) AS n FROM auth_sessions').get().n;
+}
+
 module.exports = {
   openDatabase, loadSnapshot, persistSnapshot,
   appendAuditLog, queryAuditLogs,
   closeDatabase, SCHEMA_VERSION,
+  idempotencyGet, idempotencyPut, idempotencyDelete, idempotencyPrune,
+  sessionGet, sessionPut, sessionDelete, sessionPrune, sessionCount,
 };

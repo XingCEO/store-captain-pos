@@ -27,14 +27,18 @@ test('session token is stored as sha256 hash, not plaintext', async () => {
     const dbFile = path.join(ctx.dataDir, 'store.db');
     assert.ok(fs.existsSync(dbFile), 'store.db should exist');
 
-    // Open SQLite read-only to peek sessions state row
+    // Sessions live in their own indexed table (auth_sessions) — peek the
+    // token_hash column directly. Plain token must never appear; sha256 hash
+    // must be the primary key.
     const Database = require('better-sqlite3');
     const db = new Database(dbFile, { readonly: true });
-    const row = db.prepare("SELECT value FROM state WHERE name = 'sessions'").get();
+    const rows = db.prepare('SELECT token_hash, payload_json FROM auth_sessions').all();
     db.close();
-    assert.ok(row, 'sessions state row missing');
-    assert.ok(!row.value.includes(token2), 'plaintext session token leaked into DB');
-    assert.ok(row.value.includes(expectedHash), 'sha256 hash of token not stored as session key');
+    assert.ok(rows.length >= 1, 'auth_sessions should have at least one row');
+    const hashes = rows.map((r) => r.token_hash);
+    const blob = rows.map((r) => r.payload_json).join('\n');
+    assert.ok(!blob.includes(token2), 'plaintext session token leaked into auth_sessions.payload_json');
+    assert.ok(hashes.includes(expectedHash), 'sha256 hash of token missing from auth_sessions.token_hash');
   } finally {
     await stopTestServer(ctx);
   }

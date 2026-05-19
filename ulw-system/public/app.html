@@ -323,6 +323,12 @@
             <div class="action-row"><button id="loadUsers" type="button">員工</button><button id="createUser" class="ghost" type="button">新增收銀</button><button id="loadStoreSettings" class="ghost" type="button">設定</button></div>
             <pre id="settingsResult" class="receipt-output small-output">尚未讀取設定</pre>
           </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">Subscription</p><h2>訂閱方案</h2></div><button id="loadSubscription" class="ghost" type="button">讀取</button></div>
+            <p class="note">本地 ledger：方案、用量、entitlements 直接從 /api/v1/subscription/current；正式扣款不在 MVP 內。</p>
+            <div class="action-row"><button id="upgradeGrowth" type="button">升級 Growth</button><button id="upgradeChain" class="ghost" type="button">升級 Chain</button><button id="cancelSubscription" class="ghost" type="button">取消（期末）</button></div>
+            <pre id="subscriptionResult" class="receipt-output small-output">尚未讀取方案</pre>
+          </article>
           <article class="panel span-2">
             <div class="panel-head"><div><p class="eyebrow">Audit Trail</p><h2>稽核紀錄</h2></div><button id="loadAudit" class="ghost" type="button">讀取 Audit</button></div>
             <pre id="auditResult" class="receipt-output">等待查詢</pre>

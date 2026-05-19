@@ -6,6 +6,8 @@ const path = require('path');
 const {
   openDatabase, loadSnapshot, persistSnapshot,
   appendAuditLog, queryAuditLogs, closeDatabase,
+  idempotencyGet, idempotencyPut, idempotencyDelete, idempotencyPrune,
+  sessionGet, sessionPut, sessionDelete, sessionPrune,
 } = require('./db');
 const { logger } = require('./logger');
 const metrics = require('./metrics');
@@ -21,6 +23,10 @@ const roleRank = {
   ADMIN: 4,
 };
 
+// Persisted Maps land in the snapshot blob. Idempotency keys + sessions
+// + refresh tokens have their own indexed SQLite tables (see db.js) and are
+// fronted by SqliteBackedMap, so they MUST NOT also live in the snapshot or
+// startup would double-count them. See `liveTables` below.
 const persistedMaps = [
   'products', 'skus', 'productPrices',
   'orders', 'orderItems', 'orderEvents',
@@ -34,9 +40,12 @@ const persistedMaps = [
   'aiInsights',
   'inventoryLevels', 'inventoryLedger', 'stockCounts', 'transferOrders', 'purchaseOrders',
   'recipes', 'recipeItems',
-  'idempotency', 'orderIdempotency',
-  'sessions', 'refreshTokens',
 ];
+
+// Live tables — Map-compatible API but backed by indexed SQLite tables.
+// These survive crashes mid-snapshot and can be pruned via SQL on the worker
+// tick rather than scanning a Map.
+const liveTables = ['idempotency', 'orderIdempotency', 'sessions', 'refreshTokens'];
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -51,6 +60,86 @@ function createData() {
   }
   return data;
 }
+
+// SqliteBackedMap — Map-compatible interface for tables that need durable
+// indexed storage (idempotency keys, sessions). Read-through cache keeps
+// hot lookups fast; writes fan out to both cache and SQLite. Iteration
+// always reads from SQLite to stay consistent under concurrent worker
+// updates.
+class SqliteBackedMap {
+  constructor(db, ops, namespace) {
+    this.db = db;
+    this.ops = ops; // { get, put, delete, list }
+    this.namespace = namespace;
+    this._cache = new Map();
+  }
+  get(key) {
+    if (this._cache.has(key)) return this._cache.get(key);
+    const row = this.ops.get(this.db, key);
+    if (row !== undefined) this._cache.set(key, row);
+    return row;
+  }
+  has(key) {
+    return this.get(key) !== undefined;
+  }
+  set(key, value) {
+    this._cache.set(key, value);
+    this.ops.put(this.db, key, value, { namespace: this.namespace, tenantId: extractTenant(key) });
+    return this;
+  }
+  delete(key) {
+    this._cache.delete(key);
+    this.ops.delete(this.db, key);
+    return true;
+  }
+  *entries() {
+    yield* this.ops.list(this.db);
+  }
+  *values() {
+    for (const [, v] of this.ops.list(this.db)) yield v;
+  }
+  *keys() {
+    for (const [k] of this.ops.list(this.db)) yield k;
+  }
+  [Symbol.iterator]() { return this.entries(); }
+  get size() {
+    return this.ops.size ? this.ops.size(this.db) : [...this.ops.list(this.db)].length;
+  }
+  clear() {
+    this._cache.clear();
+    if (this.ops.clear) this.ops.clear(this.db);
+  }
+}
+
+function extractTenant(key) {
+  // Keys are namespaced as `tenantId:...` — pull leading tenant.
+  if (typeof key !== 'string') return null;
+  const i = key.indexOf(':');
+  return i > 0 ? key.slice(0, i) : null;
+}
+
+function idempotencyList(db) {
+  const rows = db.prepare('SELECT key, fingerprint, response_json, created_at FROM idempotency_keys').all();
+  return rows.map((r) => [r.key, { fingerprint: r.fingerprint, response: safeJson(r.response_json), createdAt: new Date(r.created_at).toISOString() }]);
+}
+function idempotencySize(db) { return db.prepare('SELECT COUNT(*) AS n FROM idempotency_keys').get().n; }
+function sessionList(db) {
+  const rows = db.prepare('SELECT token_hash, payload_json FROM auth_sessions WHERE expires_at > ?').all(Date.now());
+  return rows.map((r) => [r.token_hash, safeJson(r.payload_json)]);
+}
+function sessionSize(db) { return db.prepare('SELECT COUNT(*) AS n FROM auth_sessions WHERE expires_at > ?').get(Date.now()).n; }
+function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
+function sessionClear(db) { db.prepare('DELETE FROM auth_sessions').run(); }
+function idempotencyClear(db) { db.prepare('DELETE FROM idempotency_keys').run(); }
+
+const idempotencyOps = {
+  get: idempotencyGet, put: idempotencyPut, delete: idempotencyDelete,
+  list: idempotencyList, size: idempotencySize, clear: idempotencyClear,
+};
+const sessionOps = {
+  get: sessionGet, put: sessionPut, delete: sessionDelete,
+  list: sessionList, size: sessionSize, clear: sessionClear,
+};
 
 function defaultCounters() {
   return {
@@ -74,6 +163,13 @@ function stableStringify(value) {
 
 function pruneIdempotency(map, nowMs) {
   let pruned = 0;
+  // SqliteBackedMap exposes the underlying DB so prune can be one SQL DELETE
+  // instead of a Map scan + per-key DELETE.
+  if (map && map.db && typeof map.ops?.get === 'function') {
+    pruned = idempotencyPrune(map.db, IDEMPOTENCY_TTL_MS);
+    map._cache.clear();
+    return pruned;
+  }
   for (const [key, value] of map.entries()) {
     const createdAt = value && value.createdAt ? new Date(value.createdAt).getTime() : null;
     if (createdAt && nowMs - createdAt > IDEMPOTENCY_TTL_MS) {
@@ -91,6 +187,14 @@ class Store {
     this.counters = defaultCounters();
     this.db = openDatabase(dataDir);
     rateLimit.init(this.db);
+    // Promote idempotency + sessions to SQLite-backed live tables.
+    // Snapshot-load no longer drives these; they hydrate from their own
+    // tables and survive snapshot corruption.
+    this.data.idempotency      = new SqliteBackedMap(this.db, idempotencyOps, 'generic');
+    this.data.orderIdempotency = new SqliteBackedMap(this.db, idempotencyOps, 'order_create');
+    this.data.sessions         = new SqliteBackedMap(this.db, sessionOps, 'session');
+    // Refresh tokens reuse the session table — same TTL semantics.
+    this.data.refreshTokens    = new SqliteBackedMap(this.db, sessionOps, 'refresh');
   }
 
   nextId(prefix) {
