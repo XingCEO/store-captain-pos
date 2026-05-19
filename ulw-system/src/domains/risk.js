@@ -508,7 +508,25 @@ function register(router, runtime) {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
     if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
     const phone = (url.searchParams.get('phone') || '').trim();
-    runtime.json(res, 200, { items: [...store.data.customers.values()].filter((customer) => customer.tenantId === ctx.tenantId && (!phone || customer.phone.includes(phone))) });
+    // Reject short substring queries — a tenant-scoped insider could otherwise
+    // dump every customer phone with `phone=09`. Allow empty phone to list
+    // first page only, and bound the response so a wildcard doesn't return all.
+    const MAX_RESULTS = 50;
+    const MIN_QUERY_LEN = 4;
+    if (phone && phone.length < MIN_QUERY_LEN) {
+      runtime.json(res, 400, runtime.error('CUSTOMER_QUERY_TOO_SHORT', `phone query must be at least ${MIN_QUERY_LEN} characters`));
+      return;
+    }
+    const matches = [];
+    for (const customer of store.data.customers.values()) {
+      if (customer.tenantId !== ctx.tenantId) continue;
+      if (phone && !customer.phone.includes(phone)) continue;
+      matches.push(customer);
+      if (matches.length >= MAX_RESULTS) break;
+    }
+    runtime.addAudit(ctx, 'CUSTOMER_SEARCH', 'CUSTOMER', 'search', null,
+      { queryLen: phone.length, resultCount: matches.length });
+    runtime.json(res, 200, { items: matches, truncatedAt: MAX_RESULTS });
   });
 
   router.add('GET', '/api/v1/coupons', async ({ res, ctx }) => {

@@ -1,4 +1,4 @@
-const { roleRank } = require('../core/runtime');
+const { roleRank, clientIp } = require('../core/runtime');
 const { hashPin, verifyPin, hashToken, generateSessionToken } = require('../core/security');
 const { requireCurrentPlanCapacity } = require('../core/entitlements');
 const mfa = require('../core/mfa');
@@ -44,6 +44,13 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 function getIpLockoutKey(tenantOrEmail, ip) {
   return `ip:${String(tenantOrEmail).toLowerCase()}:${ip}`;
+}
+
+function getTenantRoleLockoutKey(tenantId, role) {
+  // Locks out repeated user_not_found events on the same (tenant, role) pair
+  // so a username-spray that never resolves a user still trips a per-account
+  // bucket. Without this, only ipKey accumulated and rotating IPs slipped past.
+  return `tr:${String(tenantId).toLowerCase()}:${String(role).toLowerCase()}`;
 }
 
 function getUserLockoutKey(tenantId, userId) {
@@ -104,7 +111,7 @@ function register(router, runtime) {
     const tenantId = String(body.tenantId || '').trim();
     const requestedRole = String(body.role || 'CASHIER').trim().toUpperCase();
     const storeId = String(body.storeId || 'store-001').trim();
-    const ip = req.socket.remoteAddress || '0.0.0.0';
+    const ip = clientIp(req);
 
     if (!tenantId || !storeId || !roleRank[requestedRole]) {
       runtime.json(res, 400, runtime.error('LOGIN_INVALID_CREDENTIALS', 'tenantId, storeId, role required'));
@@ -115,6 +122,16 @@ function register(router, runtime) {
     const ipLocked = checkLockout(ipKey);
     if (ipLocked) {
       runtime.json(res, 429, runtime.error('LOGIN_RATE_LIMITED', 'too many failed login attempts', { retryAfterSeconds: ipLocked.retryAfterSeconds }));
+      return;
+    }
+
+    // (tenant, role) bucket fires on user_not_found even when the attacker
+    // rotates IPs. Checked before tenant seed so an unknown role on a known
+    // tenant doesn't grant a free seed call per attempt.
+    const tenantRoleKey = getTenantRoleLockoutKey(tenantId, requestedRole);
+    const trLocked = checkLockout(tenantRoleKey);
+    if (trLocked) {
+      runtime.json(res, 429, runtime.error('LOGIN_RATE_LIMITED', 'tenant/role temporarily locked', { retryAfterSeconds: trLocked.retryAfterSeconds }));
       return;
     }
 
@@ -139,7 +156,8 @@ function register(router, runtime) {
 
     if (!user) {
       recordFailure(ipKey);
-      failAudit(null, 'user_not_found', ipKey);
+      recordFailure(tenantRoleKey);
+      failAudit(null, 'user_not_found', tenantRoleKey);
       runtime.json(res, 403, runtime.error('LOGIN_INVALID_CREDENTIALS', 'credentials invalid'));
       return;
     }

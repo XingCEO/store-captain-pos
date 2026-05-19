@@ -11,6 +11,16 @@ function openDatabase(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, 'store.db');
   const db = new Database(file);
+  // Restrict file mode on POSIX so the DB (which holds session tokens, PIN
+  // hashes, MFA secrets, PII) isn't world-readable. Windows ACLs require
+  // a separate install-time icacls step.
+  if (process.platform !== 'win32') {
+    try { fs.chmodSync(file, 0o600); } catch { /* best-effort */ }
+    // Lock the WAL companion files when they exist.
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.chmodSync(`${file}${suffix}`, 0o600); } catch { /* may not yet exist */ }
+    }
+  }
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');

@@ -23,6 +23,21 @@ const roleRank = {
   ADMIN: 4,
 };
 
+// Trust X-Forwarded-For only when TRUST_PROXY=1 is set in env. Without this
+// gate, an attacker can forge their apparent IP by injecting the header.
+function clientIp(req) {
+  if (!req) return '0.0.0.0';
+  if (process.env.TRUST_PROXY === '1') {
+    const xff = req.headers && req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.length > 0) {
+      const first = xff.split(',')[0].trim();
+      // Reject obviously malformed inputs; fall back to socket if so.
+      if (/^[a-fA-F0-9:.]+$/.test(first) && first.length <= 64) return first;
+    }
+  }
+  return (req.socket && req.socket.remoteAddress) || '0.0.0.0';
+}
+
 // Persisted Maps land in the snapshot blob. Idempotency keys + sessions
 // + refresh tokens have their own indexed SQLite tables (see db.js) and are
 // fronted by SqliteBackedMap, so they MUST NOT also live in the snapshot or
@@ -630,4 +645,4 @@ function createRuntime({ dataDir, publicDir }) {
   };
 }
 
-module.exports = { createRuntime, roleRank, IDEMPOTENCY_TTL_MS };
+module.exports = { createRuntime, roleRank, IDEMPOTENCY_TTL_MS, clientIp };

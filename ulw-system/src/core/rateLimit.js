@@ -39,7 +39,14 @@ function pickRule(req) {
 }
 
 function identityFor(req) {
-  return req.socket?.remoteAddress || 'unknown';
+  if (process.env.TRUST_PROXY === '1') {
+    const xff = req && req.headers && req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.length > 0) {
+      const first = xff.split(',')[0].trim();
+      if (/^[a-fA-F0-9:.]+$/.test(first) && first.length <= 64) return first;
+    }
+  }
+  return req && req.socket && req.socket.remoteAddress || 'unknown';
 }
 
 function consume(bucket, identity, now = Date.now()) {

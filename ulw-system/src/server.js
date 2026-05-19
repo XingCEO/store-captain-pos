@@ -99,13 +99,21 @@ function createApp({ dataDir, publicDir, port }) {
     res.on('finish', () => clearTimeout(timer));
     res.on('close',  () => clearTimeout(timer));
 
-    // /metrics — optionally token-gated
+    // /metrics — bearer-gated. Production MUST set METRICS_TOKEN (enforced at
+    // startup below). Comparison is constant-time.
     const urlPath = req.url ? req.url.split('?')[0] : '';
     if (req.method === 'GET' && urlPath === '/metrics') {
       if (metricsToken) {
         const auth = req.headers.authorization || '';
         const match = String(auth).match(/^Bearer\s+(.+)$/i);
-        if (!match || match[1] !== metricsToken) {
+        let allowed = false;
+        if (match) {
+          const provided = Buffer.from(match[1]);
+          const expected = Buffer.from(metricsToken);
+          allowed = provided.length === expected.length
+            && crypto.timingSafeEqual(provided, expected);
+        }
+        if (!allowed) {
           res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ errorCode: 'METRICS_UNAUTHORIZED', message: 'bearer token required' }));
           return;
@@ -183,6 +191,12 @@ if (require.main === module) {
       process.exit(1);
     }
     logger.warn('WARNING: sandbox/demo PoC running with NODE_ENV=production and DEMO_MODE=1. Invoice and payment flows are stubs.');
+  }
+  // Metrics endpoint MUST be bearer-gated in production — it returns per-tenant
+  // counts that an unauthenticated attacker can scrape for competitive intel.
+  if (process.env.NODE_ENV === 'production' && !process.env.METRICS_TOKEN) {
+    logger.error('Refusing to start: NODE_ENV=production requires METRICS_TOKEN to protect /metrics.');
+    process.exit(1);
   }
 
   app.listen(PORT, () => {
