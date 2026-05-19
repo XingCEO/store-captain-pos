@@ -113,14 +113,16 @@ test('/pay/manual via CARD returns provider txn, auth, fee, netSettled', async (
   try {
     const token = await loginAs(ctx.port, 't-pp-3', 'CASHIER');
     const skuId = await firstSkuId(ctx.port, token);
+    // unitPrice in the body is ignored — server derives from sku.price (55).
+    // qty 2 => grandTotal 110; fee = ceil(110 * 0.02) = 3; net = 107.
     const create = await request(ctx.port, 'POST', '/api/v1/orders', {
       storeId: 'store-001', terminalId: 'term-pp', businessDate: todayBusinessDate(),
-      items: [{ skuId, name: '招牌奶茶', qty: 2, unitPrice: 100 }],
+      items: [{ skuId, name: '招牌奶茶', qty: 2 }],
       idempotencyKey: `pp-card-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 200, paymentMethod: 'CARD', cashReceived: 200,
+      amount: 110, paymentMethod: 'CARD', cashReceived: 110,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.equal(pay.body.state, 'PAID_PENDING');
@@ -128,8 +130,8 @@ test('/pay/manual via CARD returns provider txn, auth, fee, netSettled', async (
     assert.equal(pay.body.paymentSummary.settlementState, 'PENDING_SETTLEMENT');
     assert.ok(pay.body.paymentSummary.providerTransactionId.startsWith('psp-card-'));
     assert.ok(pay.body.paymentSummary.authorizationCode.startsWith('AUTH-'));
-    assert.equal(pay.body.paymentSummary.fee, 4);
-    assert.equal(pay.body.paymentSummary.netSettledAmount, 196);
+    assert.equal(pay.body.paymentSummary.fee, 3);
+    assert.equal(pay.body.paymentSummary.netSettledAmount, 107);
   } finally { await stopTestServer(ctx); }
 });
 

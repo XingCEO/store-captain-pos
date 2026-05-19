@@ -182,13 +182,24 @@ function register(router, runtime) {
     let discountTotal = 0;
     for (const item of items) {
       const sku = store.data.skus.get(item.skuId);
-      if (!sku || sku.tenantId !== ctx.tenantId || !Number.isInteger(item.qty) || item.qty <= 0 || typeof item.unitPrice !== 'number' || item.unitPrice < 0) {
+      if (!sku || sku.tenantId !== ctx.tenantId || !Number.isInteger(item.qty) || item.qty <= 0) {
         runtime.json(res, 400, runtime.error('ORDER_ITEM_INVALID', 'invalid item payload'));
         return;
       }
-      const discountAmount = Number(item.discountAmount || 0);
-      const lineSubtotal = item.qty * item.unitPrice;
-      const line = { id: store.nextId('orderItem'), tenantId: ctx.tenantId, orderId: null, productId: sku.productId, skuId: sku.id, name: item.name || sku.name, qty: item.qty, unitPrice: item.unitPrice, discountAmount, modifiers: Array.isArray(item.modifiers) ? item.modifiers.map(String) : [], notes: item.notes || null, subtotal: lineSubtotal - discountAmount };
+      if (typeof sku.price !== 'number' || sku.price < 0) {
+        runtime.json(res, 400, runtime.error('ORDER_ITEM_INVALID', `sku ${sku.id} has no valid server price`));
+        return;
+      }
+      // Server-derived unitPrice. Client-sent `item.unitPrice` is ignored so a
+      // CASHIER cannot submit price=0 to give items away or inflate a refund
+      // laundering cycle. An explicit override path (e.g. clerk discount)
+      // would route through PATCH /orders/:id/discount with audit, not here.
+      const unitPrice = sku.price;
+      // Reject discount injection on the client side; manager discount path
+      // is the only legitimate route.
+      const discountAmount = 0;
+      const lineSubtotal = item.qty * unitPrice;
+      const line = { id: store.nextId('orderItem'), tenantId: ctx.tenantId, orderId: null, productId: sku.productId, skuId: sku.id, name: item.name || sku.name, qty: item.qty, unitPrice, discountAmount, modifiers: Array.isArray(item.modifiers) ? item.modifiers.map(String) : [], notes: item.notes || null, subtotal: lineSubtotal - discountAmount };
       subtotal += lineSubtotal;
       discountTotal += discountAmount;
       lineRecords.push(line);

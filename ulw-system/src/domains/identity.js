@@ -1,5 +1,5 @@
 const { roleRank, clientIp } = require('../core/runtime');
-const { hashPin, verifyPin, hashToken, generateSessionToken } = require('../core/security');
+const { hashPin, verifyPin, hashToken, generateSessionToken, encryptSecret, decryptSecret } = require('../core/security');
 const { requireCurrentPlanCapacity } = require('../core/entitlements');
 const mfa = require('../core/mfa');
 
@@ -394,7 +394,11 @@ function register(router, runtime) {
       return;
     }
     const secret = mfa.generateSecret();
-    const next = { ...current, mfaSecret: secret, mfaEnabled: false, mfaEnrollStartedAt: runtime.nowIso(), updatedAt: runtime.nowIso() };
+    // Wrap with AES-256-GCM under MFA_KEK before persist. The decryptable
+    // base32 secret is only emitted in this response (so the client can build
+    // the provisioning URI / QR); subsequent verifyTotp calls decrypt at
+    // read time.
+    const next = { ...current, mfaSecret: encryptSecret(secret), mfaEnabled: false, mfaEnrollStartedAt: runtime.nowIso(), updatedAt: runtime.nowIso() };
     store.data.users.set(key, next);
     runtime.addAudit(ctx, 'AUTH_MFA_ENROLL_STARTED', 'user', ctx.userId, null, { mfaEnabled: false });
     const label = `${current.email || ctx.userId}@${ctx.tenantId}`;
@@ -420,7 +424,7 @@ function register(router, runtime) {
     const user = store.data.users.get(key);
     if (!user || !user.mfaSecret) { runtime.json(res, 400, runtime.error('MFA_INVALID', 'no enrollment in progress')); return; }
     if (user.mfaEnabled) { runtime.json(res, 409, runtime.error('MFA_ALREADY_ENROLLED', 'already enrolled')); return; }
-    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+    if (!mfa.verifyTotp(code, decryptSecret(user.mfaSecret))) {
       runtime.addAudit(ctx, 'AUTH_MFA_VERIFY_FAILED', 'user', ctx.userId, null, { reason: 'invalid_code' });
       runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
       return;
@@ -460,7 +464,7 @@ function register(router, runtime) {
       runtime.json(res, 401, runtime.error('MFA_INVALID', 'user no longer requires MFA'));
       return;
     }
-    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+    if (!mfa.verifyTotp(code, decryptSecret(user.mfaSecret))) {
       recordMfaFailure(lockoutKey);
       runtime.addAudit(
         { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
@@ -527,7 +531,7 @@ function register(router, runtime) {
       runtime.json(res, 400, runtime.error('MFA_INVALID', 'MFA not enabled'));
       return;
     }
-    if (!mfa.verifyTotp(code, user.mfaSecret)) {
+    if (!mfa.verifyTotp(code, decryptSecret(user.mfaSecret))) {
       runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
       return;
     }

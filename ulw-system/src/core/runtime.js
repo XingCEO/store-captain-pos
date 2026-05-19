@@ -438,6 +438,15 @@ function createRuntime({ dataDir, publicDir }) {
     const hashedToken = rawToken ? security.hashToken(rawToken) : null;
     const session = hashedToken ? store.data.sessions.get(hashedToken) : null;
     if (session && new Date(session.expiresAt).getTime() > Date.now()) {
+      // Session binding: when the client provided X-Device-Id at login, the
+      // session record captured it. Subsequent requests with a different
+      // device id are rejected via deviceMismatch (set on the returned ctx
+      // and inspected by middleware/requireTenant). Sessions without a
+      // recorded deviceId (legacy / tests not setting the header) skip the
+      // check.
+      const recordedDevice = session.deviceId && session.deviceId !== 'unknown' ? session.deviceId : null;
+      const headerDevice = req.headers['x-device-id'] || null;
+      const deviceMismatch = recordedDevice !== null && headerDevice !== null && headerDevice !== recordedDevice;
       return {
         tenantId: session.tenantId,
         userId: session.userId,
@@ -447,8 +456,9 @@ function createRuntime({ dataDir, publicDir }) {
         sessionId: hashedToken,
         rawToken,
         userAgent: req.headers['user-agent'] || '',
-        ip: req.socket.remoteAddress || '0.0.0.0',
-        deviceId: req.headers['x-device-id'] || session.deviceId || 'unknown',
+        ip: clientIp(req),
+        deviceId: headerDevice || recordedDevice || 'unknown',
+        deviceMismatch,
       };
     }
     return {
@@ -466,6 +476,10 @@ function createRuntime({ dataDir, publicDir }) {
   }
 
   function requireTenant(res, ctx) {
+    if (ctx.deviceMismatch) {
+      json(res, 401, error('DEVICE_MISMATCH', 'bearer token bound to a different device'));
+      return false;
+    }
     if (!ctx.tenantId) {
       json(res, 403, error('TENANT_NOT_AUTHORIZED', 'tenant id required'));
       return false;
