@@ -94,6 +94,17 @@ const spec = {
         responses: { 200: { description: 'VOIDED' }, 409: { description: 'Already paid or voided' } },
       },
     },
+    '/api/v1/channels/orders/lookup': {
+      get: {
+        summary: 'Public customer order lookup using a signed token',
+        parameters: [{ name: 'token', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Customer-safe order snapshot' },
+          403: { description: 'Invalid or expired lookup token' },
+          404: { description: 'Order not found' },
+        },
+      },
+    },
     '/api/v1/products': {
       get: {
         summary: 'List products visible to tenant + store',

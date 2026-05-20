@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { orderItems, paidOrders } = require('./commerce');
 const { roleRank } = require('../core/runtime');
 const { requireFeature } = require('../core/entitlements');
+const { signOrderLookupToken, verifyOrderLookupToken } = require('../core/orderLookupToken');
 
 // Channel guest auth: tenantPublicKey is a bearer-grade secret. Require at
 // least 32 chars of input, hash inputs with sha256, then compare with
@@ -69,6 +70,27 @@ function inventoryRows(runtime, ctx) {
     const level = getInventory(runtime, ctx, sku.id);
     return { skuId: sku.id, skuCode: sku.skuCode, name: sku.name, stockOnHand: level.stockOnHand, safetyStock: 10, state: level.stockOnHand <= 0 ? 'OUT' : level.stockOnHand <= 10 ? 'LOW' : 'OK', updatedAt: level.updatedAt || sku.updatedAt };
   });
+}
+
+function publicOrderLookup(runtime, order) {
+  const storeRecord = runtime.store.data.stores.get(`${order.tenantId}:${order.storeId}`);
+  return {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    source: order.source || 'POS',
+    state: order.state,
+    paymentState: order.paymentState,
+    storeId: order.storeId,
+    storeName: storeRecord?.name || order.storeId,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    grandTotal: order.grandTotal || 0,
+    items: orderItems(runtime, order.id).map((item) => ({
+      name: item.name,
+      qty: item.qty,
+      subtotal: item.subtotal,
+    })),
+  };
 }
 
 // Valid KDS production-state transitions
@@ -184,7 +206,7 @@ function register(router, runtime) {
       const order = { id: orderId, tenantId: resolvedCtx.tenantId, storeId, terminalId: resolvedCtx.deviceId, businessDate: at.slice(0, 10), source: channel, sourceRef, state: 'CREATED', paymentState: 'PENDING', orderNumber: `ORD-${orderId}`, actor: resolvedCtx.userId, createdBy: resolvedCtx.userId, channelPayload: body, itemCount: lines.length, subtotal, discountTotal: 0, taxTotal: 0, grandTotal: subtotal, createdAt: at, updatedAt: at };
       store.data.orders.set(orderId, order);
       for (const line of lines) store.data.orderItems.set(line.id, line);
-      const response = { orderId, source: channel, sourceRef, state: order.state, paymentState: order.paymentState, orderNumber: order.orderNumber, grandTotal: order.grandTotal };
+      const response = { orderId, source: channel, sourceRef, state: order.state, paymentState: order.paymentState, orderNumber: order.orderNumber, grandTotal: order.grandTotal, lookupToken: signOrderLookupToken(order, { source: channel }) };
       store.data.idempotency.set(idemKey, { fingerprint, response });
       runtime.addAudit(resolvedCtx, 'CHANNEL_ORDER_CREATED', 'CHANNEL_ORDER', orderId, null, { id: orderId, storeId, channel, state: order.state, grandTotal: order.grandTotal });
       runtime.json(res, 200, response);
@@ -193,6 +215,20 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/channels/qr/orders', channelOrderHandler('QR'));
   router.add('POST', '/api/v1/channels/line/orders', channelOrderHandler('LINE'));
+
+  router.add('GET', '/api/v1/channels/orders/lookup', async ({ res, url }) => {
+    const verified = verifyOrderLookupToken(url.searchParams.get('token'));
+    if (!verified.ok) {
+      runtime.json(res, 403, runtime.error('CHANNEL_AUTH_FAILED', 'order lookup token invalid'));
+      return;
+    }
+    const order = store.data.orders.get(verified.payload.orderId);
+    if (!order || order.tenantId !== verified.payload.tenantId || order.storeId !== verified.payload.storeId) {
+      runtime.json(res, 404, runtime.error('ORDER_NOT_FOUND', 'order not found'));
+      return;
+    }
+    runtime.json(res, 200, publicOrderLookup(runtime, order));
+  });
 
   // PATCH /api/v1/channels/orders/:id/status
   // Role: MANAGER+; audit CHANNEL_ORDER_STATUS_CHANGED with before/after state
@@ -502,12 +538,14 @@ function register(router, runtime) {
     const sku = store.data.skus.get(body.skuId);
     const qty = Number(body.qty);
     if (!sku || sku.tenantId !== ctx.tenantId || !Number.isInteger(qty) || qty <= 0 || !body.fromStoreId || !body.toStoreId) { runtime.json(res, 400, runtime.error('TRANSFER_INVALID', 'skuId, qty, fromStoreId, toStoreId required')); return; }
-    // requireStoreScope on both stores
-    if (ctx.storeIds.length > 0 && !ctx.storeIds.includes(body.fromStoreId)) {
+    // Fail-closed scope on BOTH stores. The previous `storeIds.length > 0` guard let a
+    // user with an empty store scope transfer between arbitrary stores — every other
+    // endpoint blocks that via requireStoreScope, so mirror it here.
+    if (!Array.isArray(ctx.storeIds) || ctx.storeIds.length === 0 || !ctx.storeIds.includes(body.fromStoreId)) {
       runtime.json(res, 403, runtime.error('TRANSFER_STORE_SCOPE_VIOLATION', 'fromStoreId not in tenant scope', { storeId: body.fromStoreId }));
       return;
     }
-    if (ctx.storeIds.length > 0 && !ctx.storeIds.includes(body.toStoreId)) {
+    if (!ctx.storeIds.includes(body.toStoreId)) {
       runtime.json(res, 403, runtime.error('TRANSFER_STORE_SCOPE_VIOLATION', 'toStoreId not in tenant scope', { storeId: body.toStoreId }));
       return;
     }
