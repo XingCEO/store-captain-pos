@@ -20,19 +20,17 @@ src/
 | Task | Location | Notes |
 |------|----------|-------|
 | Route lifecycle | `server.js`, `core/router.js` | `router.add(method, matcher, handler)` |
-| Tenant / role / audit | `core/runtime.js` | `requireTenant`, `requireRole`, `requireStoreScope`, `addAudit` |
+| Core kernel | `core/` | Read `core/AGENTS.md`; runtime, persistence, auth, audit, idempotency, workers |
 | Persist / SQLite | `core/db.js`, `core/runtime.js` | Map snapshot + audit table |
-| Auth / users | `domains/identity.js` | sessions keyed by token hash |
-| Catalog | `domains/catalog.js` | products, SKUs, price batch, import |
-| Orders / payments | `domains/commerce.js` | idempotent order create, pay, refund, void |
-| Operations | `domains/operations.js` | order hub, KDS, cash drawer, inventory |
-| Risk / reporting | `domains/risk.js` | invoice workflows, reports, exports, telemetry, sync jobs |
+| Domain APIs | `domains/` | Read `domains/AGENTS.md`; identity/subscription/catalog/commerce/operations/risk |
 | Background work | `core/syncWorker.js`, `workers/syncWorker.js` | draft expiry, telemetry stale, outbox jobs |
 
 ## CONVENTIONS
 
 - Domain files export `register(router, runtime)`; domains do not call each other directly.
 - Handlers read/write via `runtime.store.data` Maps and helpers only.
+- `core/` changes have cross-domain blast radius; prefer focused helper changes with targeted tests before broad edits.
+- `domains/` changes own HTTP behavior; update docs/tests when route contracts change.
 - Mutations succeed only when response status `< 400`; `server.js` then calls `store.persist()`.
 - Update Map rows by copy + `.set(key, next)`. Do not mutate stored object in place and assume readers notice.
 - Role checks use numeric `roleRank`; never compare role strings for authorization.

@@ -1,8 +1,8 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-17 Asia/Taipei
-**Commit:** n/a（此目錄目前不是 git repo）
-**Branch:** n/a
+**Generated:** 2026-05-19 Asia/Taipei
+**Commit:** a8618a3
+**Branch:** master
 
 ## OVERVIEW
 
@@ -15,6 +15,7 @@ POSstudio/
 ├── README.md                  # 文件入口與產品定位
 ├── docs/                      # 產品、架構、合規、QA、補救與研究文件
 ├── ulw-system/                # Node.js API + 靜態前端實作
+├── ops/                       # Promtail / Grafana / logrotate 設定
 ├── .github/workflows/         # CI / CodeQL，實際進入 ulw-system 執行
 ├── qrcode-test.js             # 根目錄 QR ad hoc 測試腳本
 └── test-qr.cjs                # 根目錄 QR decode ad hoc 測試腳本
@@ -35,6 +36,11 @@ POSstudio/
 | QA 覆蓋矩陣 | `docs/qa-matrix.md` | 路由 × happy/bad/conflict/permission |
 | 人工補救 | `docs/manual-repair-playbook.md` | dead-letter / exception 誰補、何時補、怎麼補 |
 | 可執行系統 | `ulw-system/` | 先讀 `ulw-system/AGENTS.md` 與 `ulw-system/CLAUDE.md` |
+| Runtime / persistence / auth kernel | `ulw-system/src/core/` | 讀 `ulw-system/src/core/AGENTS.md` |
+| API business domains | `ulw-system/src/domains/` | 讀 `ulw-system/src/domains/AGENTS.md` |
+| 前端頁面 / Service Worker | `ulw-system/public/` | 讀 `ulw-system/public/AGENTS.md` |
+| 測試與 QA gate | `ulw-system/tests/`, `ulw-system/scripts/smoke.js` | 讀 `ulw-system/tests/AGENTS.md` |
+| 維運 / 觀測設定 | `ops/` | Promtail、Grafana alerts、logrotate；不屬 app runtime |
 
 ## CODE MAP
 
@@ -42,12 +48,15 @@ POSstudio/
 |------------------|------|----------|------|
 | `createApp` | function | `ulw-system/src/server.js` | 啟動 HTTP、runtime、router、domain、background worker |
 | `createRuntime` | function | `ulw-system/src/core/runtime.js` | Store、tenant、role、audit、idempotency、static serving |
+| `Store` | class | `ulw-system/src/core/runtime.js` | SQLite-backed maps、snapshot、audit buffer、persist |
 | `createRouter` | function | `ulw-system/src/core/router.js` | 字串 / RegExp route dispatch |
 | `identity.register` | domain | `ulw-system/src/domains/identity.js` | auth、session、users、audit logs、store settings |
+| `subscription.register` | domain | `ulw-system/src/domains/subscription.js` | plan change、cancel、entitlements、capacity limits |
 | `catalog.register` | domain | `ulw-system/src/domains/catalog.js` | products、SKUs、prices、imports |
 | `commerce.register` | domain | `ulw-system/src/domains/commerce.js` | orders、payments、refunds、voids、invoice creation helper |
 | `operations.register` | domain | `ulw-system/src/domains/operations.js` | order hub、KDS、cash drawer、inventory、channels |
 | `risk.register` | domain | `ulw-system/src/domains/risk.js` | invoice workflows、reports、exports、telemetry、AI brief、sync jobs |
+| `src/core/syncWorker.js` | worker engine | `ulw-system/src/core/syncWorker.js` | outbox、telemetry stale、draft expiry、dead-letter |
 | `scripts/smoke.js` | runtime QA | `ulw-system/scripts/smoke.js` | live-server smoke gate |
 
 ## CONVENTIONS
@@ -81,13 +90,19 @@ npm test
 npm run lint
 npm run smoke
 npm run test:a11y
+npm run worker
+npm run pg:up
+npm run pg:apply
 ```
 
-Windows 啟動指定 port：`set PORT=4000 && npm start`。根目錄沒有 `package.json`；所有 app 命令都在 `ulw-system/`。
+Windows 啟動指定 port：`set PORT=4000 && npm start`。根目錄沒有 `package.json`；所有 app 命令都在 `ulw-system/`。`npm run smoke` 需要已有執行中的 server。
 
 ## NOTES
 
 - 這不是純 docs repo：`docs/` 是規格，`ulw-system/` 是可執行實作，兩者要對齊但不可混用規則。
 - `ulw-system/CLAUDE.md` 可能記錄過期命令；以 `ulw-system/package.json` 的 scripts 為準。
 - `.omc/`、`.omx/`、`.playwright-mcp/`、`.sisyphus/` 是工具/狀態目錄；不要把其內容當產品規格。
+- `ulw-system/data/pg/**` 是 embedded Postgres 產物；不要為其產生文件或手動整理。
+- `ulw-system/migrations/*.sql` 是 DB / RLS 邊界；`migrations/meta/**` 是 Drizzle 產物，不手寫、不當產品規格。
+- `ulw-system/topbar-shots/`、根目錄 `test-*.png`、`*.log` 是驗證/截圖/紀錄產物；除非任務指明，不當規格來源。
 - 文件型交付也要驗收：README 連結、範圍、不做項、go/no-go gate、待確認人與問題。

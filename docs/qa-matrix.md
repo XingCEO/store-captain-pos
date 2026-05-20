@@ -46,6 +46,7 @@
 | POST /api/v1/order-sources/manual | ✅ | ✅ ORDER_ITEM_INVALID | ✅ SOURCE_DUPLICATE | ✅ SUBSCRIPTION_FEATURE_NOT_INCLUDED / PERMISSION_DENIED (MANAGER+) | Growth 起：外部參考去重 |
 | POST /api/v1/channels/qr/orders | ✅ | ✅ ORDER_ITEM_INVALID | ✅ CATALOG_IDEMPOTENCY_CONFLICT | ✅ SUBSCRIPTION_FEATURE_NOT_INCLUDED | Growth 起：QR 渠道建立 |
 | POST /api/v1/channels/line/orders | ✅ | ✅ CHANNEL_AUTH_FAILED | ✅ CATALOG_IDEMPOTENCY_CONFLICT | ✅ SUBSCRIPTION_FEATURE_NOT_INCLUDED | Growth 起：LINE token 驗證 |
+| GET /api/v1/channels/orders/lookup | ✅ | ✅ CHANNEL_AUTH_FAILED | n/a | n/a (簽章 token) | 顧客 QR 查詢；HMAC token 過期或竄改即拒絕 |
 | PATCH /api/v1/channels/orders/:id/status | ✅ | ✅ SOURCE_ITEM_CLOSED | ✅ OUT_OF_STOCK | ✅ SUBSCRIPTION_FEATURE_NOT_INCLUDED / PERMISSION_DENIED (MANAGER+) | Growth 起：渠道訂單狀態轉移 |
 | GET /api/v1/order-hub | ✅ | n/a | n/a | n/a | 多源訂單匯總 |
 | GET /api/v1/kds/orders | ✅ | n/a | n/a | ✅ PERMISSION_DENIED (CASHIER+) | 廚房生產狀態列表 |

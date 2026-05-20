@@ -56,7 +56,7 @@
 | ORDER_ITEM_INVALID | 400 | 訂單項目無效（SKU、數量、價格） | POST /api/v1/orders, POST /api/v1/order-sources/manual, POST /api/v1/channels/qr/orders, POST /api/v1/channels/line/orders | 否 |
 | IDEMPOTENCY_KEY_MISMATCH | 400 | 缺少冪等鍵 | POST /api/v1/orders | 否 |
 | ORDER_IDEMPOTENCY_CONFLICT | 409 | 訂單冪等鍵承載衝突 | POST /api/v1/orders, POST /api/v1/orders/:id/refund, POST /api/v1/orders/:id/void | 否 |
-| ORDER_NOT_FOUND | 404 | 訂單不存在 | PATCH /api/v1/orders/:id/discount, POST /api/v1/orders/:id/pay/manual, POST /api/v1/orders/:id/refund, POST /api/v1/orders/:id/void, GET /api/v1/orders/:id, GET /api/v1/orders/:id/events, GET /api/v1/payments | 否 |
+| ORDER_NOT_FOUND | 404 | 訂單不存在 | PATCH /api/v1/orders/:id/discount, POST /api/v1/orders/:id/pay/manual, POST /api/v1/orders/:id/refund, POST /api/v1/orders/:id/void, GET /api/v1/orders/:id, GET /api/v1/orders/:id/events, GET /api/v1/payments, GET /api/v1/channels/orders/lookup | 否 |
 | ORDER_STATE_INVALID | 409 | 訂單狀態不允許該操作（已付款、已作廢） | PATCH /api/v1/orders/:id/discount, POST /api/v1/orders/:id/pay/manual, POST /api/v1/orders/:id/refund | 否 |
 | DISCOUNT_INVALID | 400 | 折扣金額或原因碼無效 | PATCH /api/v1/orders/:id/discount | 否 |
 | PAYMENT_INVALID | 400 | 支付金額或方式無效 | POST /api/v1/orders/:id/pay/manual | 否 |
@@ -71,7 +71,7 @@
 | SOURCE_CHANNEL_UNKNOWN | 400 | 訂單來源渠道無效 | POST /api/v1/order-sources/manual | 否 |
 | MISSING_REFERENCE_ID | 400 | 缺少外部參考編號 | POST /api/v1/order-sources/manual | 否 |
 | SOURCE_DUPLICATE | 409 | 該渠道的外部參考已存在 | POST /api/v1/order-sources/manual | 否 |
-| CHANNEL_AUTH_FAILED | 400/403 | 渠道驗證失敗（LINE token、QR）  | POST /api/v1/channels/qr/orders, POST /api/v1/channels/line/orders | 否 |
+| CHANNEL_AUTH_FAILED | 400/403 | 渠道驗證失敗（LINE token、QR、顧客查詢簽章）  | POST /api/v1/channels/qr/orders, POST /api/v1/channels/line/orders, GET /api/v1/channels/orders/lookup | 否 |
 | PAYMENT_UNKNOWN | 400 | 支付相關欄位無效（項目） | POST /api/v1/channels/qr/orders, POST /api/v1/channels/line/orders | 否 |
 | SOURCE_ITEM_CLOSED | 404/409 | 訂單來源項目已關閉或狀態不允許更新 | PATCH /api/v1/channels/orders/:id/status | 否 |
 | KDS_STATE_INVALID | 400 | 生產狀態無效 | PATCH /api/v1/kds/orders/:id | 否 |

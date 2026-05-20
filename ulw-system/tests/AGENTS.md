@@ -23,8 +23,17 @@
 - `a11y.test.js` is separate and runs via `npm run test:a11y` because it uses Playwright + axe.
 - Tests must create isolated temp data and not rely on `ulw-system/data/store.db`.
 - Disable background workers in deterministic tests unless testing worker behavior directly.
+- Use `helpers.js` for HTTP tests: temp data dir, fresh app, workers disabled, request/login helpers.
+- If a test changes env or module behavior, reset `process.env` and `require.cache` in `finally`.
 - Route tests should align with `docs/qa-matrix.md`: happy path, bad input, conflict/retry, permission denial.
+- Mutating route tests should assert `errorCode`, tenant/store scope, audit side effects, and final state; do not stop at 200/201.
+- Idempotency expectation: same key + same body returns same ID with duplicated marker; same key + different body returns 409 conflict.
+- Auth/MFA/rate-limit tests should cover PIN-required, bad PIN, refresh/session, lockout, and `Retry-After` when applicable.
+- Persistence/audit tests must verify on-disk rows or restart survival when that is the contract.
+- Worker tests use explicit store fixtures or spawned processes; do not reuse normal HTTP helper shape unless testing HTTP surface.
 - Error-code expectations must align with `docs/error-codes.md`.
+- `scripts/smoke.js` is operator QA against a live server; add to it only for operator-facing happy-path regressions.
+- `scripts/pg-up.js`, `scripts/pg-apply.js`, and `scripts/backup.js` are operational/idempotent helpers, not `npm test` members.
 
 ## ANTI-PATTERNS
 
