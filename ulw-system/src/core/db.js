@@ -5,7 +5,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const metrics = require('./metrics');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function openDatabase(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -80,6 +80,15 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions(expires_at);
     CREATE INDEX IF NOT EXISTS auth_sessions_tenant_idx ON auth_sessions(tenant_id);
+    CREATE TABLE IF NOT EXISTS entities (
+      collection TEXT NOT NULL,
+      id TEXT NOT NULL,
+      tenant_id TEXT,
+      data_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (collection, id)
+    );
+    CREATE INDEX IF NOT EXISTS entities_collection_tenant_idx ON entities(collection, tenant_id);
   `);
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
   const prev = row ? Number(row.value) : 0;
@@ -93,8 +102,53 @@ function migrate(db) {
     if (prev < 3) {
       db.prepare("DELETE FROM state WHERE name IN ('idempotency', 'orderIdempotency', 'sessions', 'refreshTokens')").run();
     }
+    // v3 → v4: operational collections move out of the per-collection JSON
+    // snapshot blobs in `state` into row-level `entities`, so persist() writes
+    // only changed rows instead of rewriting every collection. Migrate each
+    // remaining blob (anything that isn't a `__special__` key) into entities,
+    // then drop the blob. `__counters__` stays in `state`.
+    if (prev < 4) {
+      migrateSnapshotBlobsToEntities(db);
+    }
     db.prepare('UPDATE meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
   }
+}
+
+function safeParseJson(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// One-time v3 → v4 data move: each `state` blob (a JSON array of [id, obj]
+// entries written by the old persistSnapshot) becomes individual rows in
+// `entities`. `__counters__` / `__auditLogs__` are not collections and stay put
+// (auditLogs is handled separately on load). Idempotent: re-running upserts.
+function migrateSnapshotBlobsToEntities(db) {
+  const SPECIAL = new Set(['__counters__', '__auditLogs__']);
+  const stateRows = db.prepare('SELECT name, value FROM state').all();
+  const insert = db.prepare(`
+    INSERT INTO entities(collection, id, tenant_id, data_json, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(collection, id) DO UPDATE SET
+      tenant_id = excluded.tenant_id, data_json = excluded.data_json, updated_at = excluded.updated_at
+  `);
+  const dropBlob = db.prepare('DELETE FROM state WHERE name = ?');
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    let migrated = 0;
+    for (const r of stateRows) {
+      if (SPECIAL.has(r.name)) continue;
+      const entries = safeParseJson(r.value);
+      if (!Array.isArray(entries)) continue;
+      for (const [id, obj] of entries) {
+        const tenantId = obj && typeof obj === 'object' ? (obj.tenantId || null) : null;
+        insert.run(r.name, String(id), tenantId, JSON.stringify(obj), now);
+        migrated += 1;
+      }
+      dropBlob.run(r.name);
+    }
+    return migrated;
+  });
+  tx();
 }
 
 function timed(label, fn) {
@@ -176,6 +230,54 @@ function persistSnapshot(db, { maps, counters, auditRows = [] }) {
       deleteLegacy.run('__auditLogs__'); // migrate-away: no longer stored as blob
       insertAuditRows(db, auditRows);
       upsertMeta.run('saved_at', now);
+    });
+    tx();
+  });
+}
+
+// Hydrate one operational collection from row-level storage (replaces reading
+// a per-collection blob out of the snapshot).
+function entityList(db, collection) {
+  return timed('entity_list', () => {
+    const rows = db.prepare('SELECT id, data_json FROM entities WHERE collection = ?').all(collection);
+    return rows.map((r) => [r.id, safeParseJson(r.data_json)]);
+  });
+}
+
+// Phase B persist: write ONLY the changed rows for each collection (plus the
+// counters blob and any buffered audit rows) inside a single transaction.
+// `changes` = [{ collection, upserts: [[id, obj]], deletes: [id] }]. This keeps
+// the same response-time atomicity the old full-snapshot path had, without
+// rewriting unchanged rows.
+function persistEntities(db, { changes = [], counters, auditRows = [] }) {
+  return timed('persist_entities', () => {
+    const up = db.prepare(`
+      INSERT INTO entities(collection, id, tenant_id, data_json, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(collection, id) DO UPDATE SET
+        tenant_id = excluded.tenant_id, data_json = excluded.data_json, updated_at = excluded.updated_at
+    `);
+    const del = db.prepare('DELETE FROM entities WHERE collection = ? AND id = ?');
+    const upsertMeta = db.prepare(`
+      INSERT INTO state(name, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+    const upsertMetaTable = db.prepare(`
+      INSERT INTO meta(key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    const now = new Date().toISOString();
+    const tx = db.transaction(() => {
+      for (const { collection, upserts = [], deletes = [] } of changes) {
+        for (const [id, obj] of upserts) {
+          const tenantId = obj && typeof obj === 'object' ? (obj.tenantId || null) : null;
+          up.run(collection, String(id), tenantId, JSON.stringify(obj), now);
+        }
+        for (const id of deletes) del.run(collection, String(id));
+      }
+      upsertMeta.run('__counters__', JSON.stringify(counters), now);
+      insertAuditRows(db, auditRows);
+      upsertMetaTable.run('saved_at', now);
     });
     tx();
   });
@@ -310,6 +412,7 @@ function sessionCount(db) {
 
 module.exports = {
   openDatabase, loadSnapshot, persistSnapshot,
+  entityList, persistEntities,
   appendAuditLog, queryAuditLogs,
   closeDatabase, SCHEMA_VERSION,
   idempotencyGet, idempotencyPut, idempotencyDelete, idempotencyPrune,

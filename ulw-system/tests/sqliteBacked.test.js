@@ -101,7 +101,8 @@ test('schema_version migration drops legacy sessions/idempotency from state blob
     db.prepare("INSERT INTO state(name, value, updated_at) VALUES ('idempotency', '[]', '2020-01-01')").run();
     db.close();
   }
-  // Open via runtime — should migrate to v3 and drop stale rows
+  // Open via runtime — should migrate to the current schema version and drop
+  // the stale live-table snapshot rows (v2→v3) along the way.
   const { createApp } = require('../src/server');
   const publicDir = path.join(__dirname, '..', 'public');
   const app = createApp({ dataDir, publicDir, port: 0 });
@@ -110,8 +111,47 @@ test('schema_version migration drops legacy sessions/idempotency from state blob
     const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value;
     const stale = db.prepare("SELECT COUNT(*) AS n FROM state WHERE name IN ('sessions', 'idempotency', 'orderIdempotency', 'refreshTokens')").get().n;
     db.close();
-    assert.equal(version, '3');
+    assert.equal(version, String(require('../src/core/db').SCHEMA_VERSION));
     assert.equal(stale, 0, 'legacy live-table snapshots must be removed by v2→v3 migration');
+  } finally {
+    await app.close();
+    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('v3→v4 migration moves operational snapshot blobs into entities (no data loss)', async () => {
+  const dataDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ulw-v4-'));
+  const dbFile = path.join(dataDir, 'store.db');
+  const order = { id: 'order-legacy1', tenantId: 'tenant-001', storeId: 'store-001', grandTotal: 123 };
+  {
+    // Pre-create a v3 DB with an operational collection still stored as a
+    // per-collection blob in `state` (the pre-Phase-B layout).
+    const db = new Database(dbFile);
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE state (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, tenant_id TEXT, action TEXT NOT NULL, resource_type TEXT, resource_id TEXT, actor TEXT, user_id TEXT, user_role TEXT, before_json TEXT, after_json TEXT, ip TEXT, device_id TEXT, user_agent TEXT, timestamp TEXT NOT NULL);
+    `);
+    db.prepare("INSERT INTO meta(key, value) VALUES ('schema_version', '3')").run();
+    db.prepare("INSERT INTO state(name, value, updated_at) VALUES ('orders', ?, '2020-01-01')")
+      .run(JSON.stringify([[order.id, order]]));
+    db.prepare("INSERT INTO state(name, value, updated_at) VALUES ('__counters__', ?, '2020-01-01')")
+      .run(JSON.stringify({ order: 2 }));
+    db.close();
+  }
+  const { createApp } = require('../src/server');
+  const publicDir = path.join(__dirname, '..', 'public');
+  const app = createApp({ dataDir, publicDir, port: 0 });
+  try {
+    const db = new Database(dbFile, { readonly: true });
+    const blob = db.prepare("SELECT COUNT(*) AS n FROM state WHERE name = 'orders'").get().n;
+    const rows = db.prepare("SELECT id, tenant_id, data_json FROM entities WHERE collection = 'orders'").all();
+    db.close();
+    assert.equal(blob, 0, 'orders blob must be removed from state after v3→v4 migration');
+    assert.equal(rows.length, 1, 'order must be migrated into entities as one row');
+    assert.equal(rows[0].id, order.id);
+    assert.equal(rows[0].tenant_id, 'tenant-001', 'tenant_id must be denormalised onto the row for indexing');
+    assert.deepEqual(JSON.parse(rows[0].data_json), order, 'migrated payload must be byte-for-byte the order');
   } finally {
     await app.close();
     try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}

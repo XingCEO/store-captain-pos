@@ -4,7 +4,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
-  openDatabase, loadSnapshot, persistSnapshot,
+  openDatabase, loadSnapshot,
+  entityList, persistEntities,
   appendAuditLog, queryAuditLogs, closeDatabase,
   idempotencyGet, idempotencyPut, idempotencyDelete, idempotencyPrune,
   sessionGet, sessionPut, sessionDelete, sessionPrune,
@@ -39,10 +40,11 @@ function clientIp(req) {
   return (req.socket && req.socket.remoteAddress) || '0.0.0.0';
 }
 
-// Persisted Maps land in the snapshot blob. Idempotency keys + sessions
-// + refresh tokens have their own indexed SQLite tables (see db.js) and are
-// fronted by SqliteBackedMap, so they MUST NOT also live in the snapshot or
-// startup would double-count them. See `liveTables` below.
+// Operational collections. Each is a Repository backed by row-level storage in
+// the `entities` table (one row per item) — persist() flushes only changed
+// rows, not a full snapshot. Idempotency keys + sessions + refresh tokens have
+// their own indexed tables (see db.js) fronted by SqliteBackedMap, so they MUST
+// NOT also live here or startup would double-count them. See `liveTables` below.
 const persistedMaps = [
   'products', 'skus', 'productPrices',
   'orders', 'orderItems', 'orderEvents',
@@ -233,8 +235,10 @@ class Store {
       this.counters = { ...this.counters, ...snap.counters };
     }
     for (const name of persistedMaps) {
-      const entries = Array.isArray(snap.maps[name]) ? snap.maps[name] : [];
-      this.data[name] = new Repository(name, entries);
+      // Hydrate from row-level `entities`. The legacy snapshot blobs (snap.maps)
+      // were migrated into `entities` on the v3→v4 schema bump (see db.js), so
+      // they no longer exist here.
+      this.data[name] = new Repository(name, entityList(this.db, name));
     }
     this.data.auditLogs = [];
     // Migrate legacy v1 blob auditLogs into the audit_logs table once.
@@ -299,13 +303,22 @@ class Store {
         const nowMs = Date.now();
         pruneIdempotency(this.data.idempotency, nowMs);
         pruneIdempotency(this.data.orderIdempotency, nowMs);
-        const maps = {};
+        // Peek pending changes without clearing — only clear after the flush
+        // commits, so a failed persist leaves changes queued (no data loss).
+        const changes = [];
+        const dirtyRepos = [];
         for (const name of persistedMaps) {
-          maps[name] = [...this.data[name].entries()];
+          const repo = this.data[name];
+          if (repo.hasPendingChanges()) {
+            const { upserts, deletes } = repo.peekChanges();
+            changes.push({ collection: name, upserts, deletes });
+            dirtyRepos.push(repo);
+          }
         }
         const auditRows = [...this.data.auditLogs];
         try {
-          persistSnapshot(this.db, { maps, counters: this.counters, auditRows });
+          persistEntities(this.db, { changes, counters: this.counters, auditRows });
+          for (const repo of dirtyRepos) repo.clearPending();
           if (auditRows.length) {
             this.data.auditLogs.splice(0, auditRows.length);
             for (const row of auditRows) {

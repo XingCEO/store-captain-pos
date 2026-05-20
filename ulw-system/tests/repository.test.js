@@ -47,6 +47,45 @@ test('persist()-style snapshot extraction works on Repository', () => {
   assert.deepEqual([...rebuilt.entries()], snapshot);
 });
 
+test('constructor hydration is not dirty (reflects already-persisted state)', () => {
+  const repo = new Repository('orders', [['a', { id: 'a' }]]);
+  assert.equal(repo.hasPendingChanges(), false);
+  assert.deepEqual(repo.peekChanges(), { upserts: [], deletes: [] });
+});
+
+test('set/delete record pending changes; peek does not clear', () => {
+  const repo = new Repository('orders', [['a', { id: 'a' }]]);
+  repo.set('b', { id: 'b' });
+  repo.delete('a');
+  assert.equal(repo.hasPendingChanges(), true);
+  const first = repo.peekChanges();
+  assert.deepEqual(first.upserts, [['b', { id: 'b' }]]);
+  assert.deepEqual(first.deletes, ['a']);
+  // peek is non-destructive — a failed flush can retry.
+  assert.deepEqual(repo.peekChanges(), first);
+  assert.equal(repo.hasPendingChanges(), true);
+});
+
+test('clearPending resets the dirty set after a successful flush', () => {
+  const repo = new Repository('orders');
+  repo.set('x', { id: 'x' });
+  assert.equal(repo.hasPendingChanges(), true);
+  repo.clearPending();
+  assert.equal(repo.hasPendingChanges(), false);
+  assert.deepEqual(repo.peekChanges(), { upserts: [], deletes: [] });
+  // Value is still present in the read path — clearing pending != clearing data.
+  assert.deepEqual(repo.get('x'), { id: 'x' });
+});
+
+test('set after delete cancels the pending delete (and vice versa)', () => {
+  const repo = new Repository('orders', [['a', { v: 0 }]]);
+  repo.delete('a');
+  repo.set('a', { v: 1 });
+  const { upserts, deletes } = repo.peekChanges();
+  assert.deepEqual(deletes, []);
+  assert.deepEqual(upserts, [['a', { v: 1 }]]);
+});
+
 test('Repository.filter returns matching values (Phase B query seam)', () => {
   const repo = new Repository('orders', [
     ['a', { tenantId: 't1' }],
