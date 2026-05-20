@@ -46,11 +46,10 @@
         i = (i + 1) % variants.length;
         const next = variants[i];
         metricsB.forEach((node, idx) => {
-          node.style.transition = 'opacity .25s ease';
-          node.style.opacity = '0';
+          node.classList.add('metric-row-value--fading');
           setTimeout(() => {
             node.textContent = next[idx];
-            node.style.opacity = '1';
+            node.classList.remove('metric-row-value--fading');
           }, 240);
         });
       };
@@ -112,36 +111,4 @@
     });
   });
 
-  // -----------------------------------------------------------
-  // Subtle parallax for mesh orbs (mouse based, gated by motion pref)
-  // Uses CSS `translate` so it composes with existing keyframe `transform: translate3d(...)` drift.
-  // -----------------------------------------------------------
-  if (!reduceMotion) {
-    const orbs = document.querySelectorAll('.mesh-orb');
-    if (orbs.length && CSS.supports('translate', '1px 1px')) {
-      let rx = 0, ry = 0, tx = 0, ty = 0, raf = 0, idle = 0;
-      const loop = () => {
-        const dx = tx - rx;
-        const dy = ty - ry;
-        rx += dx * 0.08;
-        ry += dy * 0.08;
-        orbs.forEach((orb, i) => {
-          const depth = 1 + i * 0.6;
-          orb.style.translate = `${(rx * depth).toFixed(2)}px ${(ry * depth).toFixed(2)}px`;
-        });
-        if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05) idle += 1; else idle = 0;
-        if (idle > 30) { raf = 0; return; }
-        raf = requestAnimationFrame(loop);
-      };
-      window.addEventListener('pointermove', (e) => {
-        tx = (e.clientX - window.innerWidth / 2) * -0.02;
-        ty = (e.clientY - window.innerHeight / 2) * -0.02;
-        idle = 0;
-        if (!raf) raf = requestAnimationFrame(loop);
-      }, { passive: true });
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden && raf) { cancelAnimationFrame(raf); raf = 0; }
-      });
-    }
-  }
 })();

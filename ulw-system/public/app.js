@@ -49,9 +49,38 @@ const roleNames = { CASHIER: '收銀員', MANAGER: '店長', SUPERVISOR: '督導
 
 const $ = (id) => document.getElementById(id);
 const money = (value) => Number(value || 0).toLocaleString('zh-TW');
-const today = () => new Date().toISOString().slice(0, 10);
+// Business date must follow the store's Asia/Taipei wall clock, not UTC. Using the
+// UTC date stamps orders made between 00:00–07:59 Taipei with the previous day,
+// which breaks daily reports and the server's Taipei-based businessDate validation.
+const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+const newIdempotencyKey = () => `idem-${(crypto.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
 const inSession = () => Boolean(state.session?.token && new Date(state.session.expiresAt).getTime() > Date.now());
 const canUse = (minRole) => (roleRank[state.session?.role] || 0) >= (roleRank[minRole] || 0);
+
+function h(tag, opts = {}, children = []) {
+  const el = document.createElement(tag);
+  if (opts.className) el.className = opts.className;
+  if (opts.text !== undefined) el.textContent = opts.text;
+  if (opts.attrs) {
+    for (const [key, value] of Object.entries(opts.attrs)) {
+      if (value !== undefined && value !== null) el.setAttribute(key, String(value));
+    }
+  }
+  if (opts.dataset) {
+    for (const [key, value] of Object.entries(opts.dataset)) {
+      if (value !== undefined && value !== null) el.dataset[key] = String(value);
+    }
+  }
+  for (const child of children) {
+    if (child === null || child === undefined) continue;
+    el.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return el;
+}
+
+function clear(el) {
+  if (el) el.replaceChildren();
+}
 
 function showAuthGate(visible) {
   $('authGate').hidden = !visible;
@@ -402,13 +431,14 @@ function visibleProducts() {
 
 function renderCategories() {
   const categories = ['all', ...new Set(state.products.map((item) => item.categoryId || 'food'))];
-  $('categoryRail').innerHTML = '';
+  clear($('categoryRail'));
   for (const category of categories) {
     const count = category === 'all' ? state.products.length : state.products.filter((item) => item.categoryId === category).length;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `category-button${state.category === category ? ' active' : ''}`;
-    button.innerHTML = `<span>${categoryNames[category] || category}</span><b>${count}</b>`;
+    button.appendChild(h('span', { text: categoryNames[category] || category }));
+    button.appendChild(h('b', { text: count }));
     button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); });
     $('categoryRail').appendChild(button);
   }
@@ -450,32 +480,31 @@ function openModifierModal(product) {
   if (!window.PosExtras) { addToCart(product); return; }
   const body = document.createElement('div');
   body.className = 'modifier-form';
-  body.innerHTML = `
-    <header class="modifier-head">
-      <div class="modifier-prod">
-        <strong>${escapeAttr(product.productName)}</strong>
-        <span>${escapeAttr(product.skuCode || product.skuId)}</span>
-      </div>
-      <div class="modifier-price">NT$<b>${money(product.price)}</b></div>
-    </header>
-    <div class="modifier-groups"></div>
-    <div class="modifier-qty">
-      <span class="eyebrow">數量</span>
-      <div class="qty-stepper" role="group" aria-label="數量">
-        <button type="button" data-step="-1" aria-label="減少">−</button>
-        <b id="modQty">1</b>
-        <button type="button" data-step="1" aria-label="增加">+</button>
-      </div>
-    </div>
-  `;
-  const groupsContainer = body.querySelector('.modifier-groups');
+  const productMeta = h('div', { className: 'modifier-prod' }, [
+    h('strong', { text: product.productName }),
+    h('span', { text: product.skuCode || product.skuId }),
+  ]);
+  const price = h('div', { className: 'modifier-price' }, ['NT$', h('b', { text: money(product.price) })]);
+  body.appendChild(h('header', { className: 'modifier-head' }, [productMeta, price]));
+  const groupsContainer = h('div', { className: 'modifier-groups' });
+  body.appendChild(groupsContainer);
+  const qtyStepper = h('div', { className: 'qty-stepper', attrs: { role: 'group', 'aria-label': '數量' } }, [
+    h('button', { text: '−', attrs: { type: 'button', 'data-step': '-1', 'aria-label': '減少' } }),
+    h('b', { text: '1', attrs: { id: 'modQty' } }),
+    h('button', { text: '+', attrs: { type: 'button', 'data-step': '1', 'aria-label': '增加' } }),
+  ]);
+  body.appendChild(h('div', { className: 'modifier-qty' }, [
+    h('span', { className: 'eyebrow', text: '數量' }),
+    qtyStepper,
+  ]));
   for (const grp of product.modifiers) {
     const g = document.createElement('fieldset');
     g.className = 'mod-group';
     g.dataset.groupName = grp.groupName;
     g.dataset.type = grp.type;
     const legend = document.createElement('legend');
-    legend.innerHTML = `<strong>${escapeAttr(grp.groupName)}</strong><span>${grp.type === 'single' ? '單選' : '可複選'}</span>`;
+    legend.appendChild(h('strong', { text: grp.groupName }));
+    legend.appendChild(h('span', { text: grp.type === 'single' ? '單選' : '可複選' }));
     g.appendChild(legend);
     const optWrap = document.createElement('div');
     optWrap.className = 'mod-options';
@@ -505,7 +534,8 @@ function openModifierModal(product) {
     g.dataset.groupName = '套餐';
     g.dataset.type = 'single';
     const legend = document.createElement('legend');
-    legend.innerHTML = `<strong>套餐升級</strong><span>單選</span>`;
+    legend.appendChild(h('strong', { text: '套餐升級' }));
+    legend.appendChild(h('span', { text: '單選' }));
     g.appendChild(legend);
     const optWrap = document.createElement('div');
     optWrap.className = 'mod-options combo-options';
@@ -541,7 +571,8 @@ function openModifierModal(product) {
     g.dataset.groupName = '加點';
     g.dataset.type = 'multi';
     const legend = document.createElement('legend');
-    legend.innerHTML = `<strong>加點 / 套餐升級</strong><span>可複選</span>`;
+    legend.appendChild(h('strong', { text: '加點 / 套餐升級' }));
+    legend.appendChild(h('span', { text: '可複選' }));
     g.appendChild(legend);
     const optWrap = document.createElement('div');
     optWrap.className = 'mod-options addon-options';
@@ -581,7 +612,8 @@ function openModifierModal(product) {
   // Live total
   const totalEl = document.createElement('div');
   totalEl.className = 'modifier-total';
-  totalEl.innerHTML = `<span>小計</span><strong>NT$<b id="modTotal">${money(product.price)}</b></strong>`;
+  totalEl.appendChild(h('span', { text: '小計' }));
+  totalEl.appendChild(h('strong', {}, ['NT$', h('b', { text: money(product.price), attrs: { id: 'modTotal' } })]));
   body.appendChild(totalEl);
   function refreshTotal() {
     const addonDelta = Array.from(body.querySelectorAll('.addon-options input:checked'))
@@ -694,10 +726,10 @@ function defaultCombosFor(product) {
 
 function renderProducts() {
   const grid = $('products');
-  grid.innerHTML = '';
+  clear(grid);
   const products = visibleProducts();
   if (products.length === 0) {
-    grid.innerHTML = '<article class="empty-state">沒有符合搜尋條件的商品</article>';
+    grid.appendChild(h('article', { className: 'empty-state', text: '沒有符合搜尋條件的商品' }));
     updateMetrics();
     return;
   }
@@ -707,15 +739,13 @@ function renderProducts() {
     button.className = 'product-card';
     button.dataset.category = product.categoryId || 'food';
     const hasMod = Array.isArray(product.modifiers) && product.modifiers.length > 0;
-    button.innerHTML = `
-      <span class="product-meta">${product.skuCode || product.skuId}</span>
-      <strong>${product.productName}</strong>
-      <span class="product-foot">
-        <b>NT$${money(product.price)}</b>
-        <em>${categoryNames[product.categoryId] || product.categoryId || '餐點'}</em>
-      </span>
-      ${hasMod ? '<span class="product-mod-badge" aria-hidden="true">可客製</span>' : ''}
-    `;
+    button.appendChild(h('span', { className: 'product-meta', text: product.skuCode || product.skuId }));
+    button.appendChild(h('strong', { text: product.productName }));
+    button.appendChild(h('span', { className: 'product-foot' }, [
+      h('b', { text: 'NT$' + money(product.price) }),
+      h('em', { text: categoryNames[product.categoryId] || product.categoryId || '餐點' }),
+    ]));
+    if (hasMod) button.appendChild(h('span', { className: 'product-mod-badge', text: '可客製', attrs: { 'aria-hidden': 'true' } }));
     button.addEventListener('click', () => pickProduct(product));
     grid.appendChild(button);
   }
@@ -732,9 +762,9 @@ function changeQty(key, delta) {
 
 function renderCart() {
   const cart = $('cart');
-  cart.innerHTML = '';
+  clear(cart);
   if (state.cart.length === 0) {
-    cart.innerHTML = '<li class="empty-cart">點選商品即可加入交易</li>';
+    cart.appendChild(h('li', { className: 'empty-cart', text: '點選商品即可加入交易' }));
     updateMetrics();
     return;
   }
@@ -742,24 +772,21 @@ function renderCart() {
     const key = item._key || item.skuId;
     const line = document.createElement('li');
     line.className = 'cart-line';
-    const modsHtml = (item.modifiers && item.modifiers.length)
-      ? '<ul class="cart-mods">' + item.modifiers.map((m) => `<li>${escapeAttr(m)}</li>`).join('') + '</ul>'
-      : '';
-    const addonsHtml = (item.addons && item.addons.length)
-      ? '<ul class="cart-addons">' + item.addons.map((a) => `<li>${escapeAttr(a)}</li>`).join('') + '</ul>'
-      : '';
-    line.innerHTML = `
-      <div class="cart-line-head">
-        <strong>${escapeAttr(item.productName)}</strong>
-        <span class="cart-line-unit">NT$${money(item.price)} × ${item.qty}</span>
-      </div>
-      ${modsHtml}${addonsHtml}
-      <div class="qty-tools">
-        <button type="button" aria-label="減少 ${escapeAttr(item.productName)}">−</button>
-        <b>NT$${money(item.price * item.qty)}</b>
-        <button type="button" aria-label="增加 ${escapeAttr(item.productName)}">+</button>
-      </div>
-    `;
+    line.appendChild(h('div', { className: 'cart-line-head' }, [
+      h('strong', { text: item.productName }),
+      h('span', { className: 'cart-line-unit', text: `NT$${money(item.price)} × ${item.qty}` }),
+    ]));
+    if (item.modifiers && item.modifiers.length) {
+      line.appendChild(h('ul', { className: 'cart-mods' }, item.modifiers.map((m) => h('li', { text: m }))));
+    }
+    if (item.addons && item.addons.length) {
+      line.appendChild(h('ul', { className: 'cart-addons' }, item.addons.map((a) => h('li', { text: a }))));
+    }
+    line.appendChild(h('div', { className: 'qty-tools' }, [
+      h('button', { text: '−', attrs: { type: 'button', 'aria-label': `減少 ${item.productName}` } }),
+      h('b', { text: 'NT$' + money(item.price * item.qty) }),
+      h('button', { text: '+', attrs: { type: 'button', 'aria-label': `增加 ${item.productName}` } }),
+    ]));
     const [minus, plus] = line.querySelectorAll('.qty-tools button');
     minus.addEventListener('click', () => changeQty(key, -1));
     plus.addEventListener('click', () => changeQty(key, 1));
@@ -811,7 +838,7 @@ async function submitOrder() {
       modifiers: item.modifiers || [],
       addons: item.addons || [],
     })),
-    idempotencyKey: `idem-${Date.now()}`,
+    idempotencyKey: newIdempotencyKey(),
   };
   const result = await api('/api/v1/orders', { method: 'POST', body: JSON.stringify(payload) });
   if (result && result.queued) {
@@ -830,7 +857,7 @@ async function submitOrder() {
 async function payOrder(method, printWindow) {
   if (!state.activeOrderId) { show('orderResult', '尚未建立訂單'); if (printWindow) printWindow.close(); return; }
   const amount = state.activeOrderTotal;
-  const payload = { paymentMethod: method, amount, cashReceived: amount };
+  const payload = { paymentMethod: method, amount, cashReceived: amount, idempotencyKey: newIdempotencyKey() };
   if (method === 'CARD') payload.cashierMemo = '手動刷卡授權碼由 PSP/刷卡機保存，POS 不保存卡號。';
   // Attach invoice settings if user set them
   const inv = state.invoiceSettings || {};
@@ -876,7 +903,11 @@ async function payOrder(method, printWindow) {
 
 function autoPrintReceipt(order, payment, invoice, printWindow) {
   if (!window.PosExtras) return;
-  const qrUrl = `${location.origin}/o.html#id=${encodeURIComponent(order.orderId || order.id || '')}&total=${encodeURIComponent(order.grandTotal || 0)}&store=${encodeURIComponent($('storeId').value)}&storeName=${encodeURIComponent(state.session?.storeName || '')}&source=POS&t=${Date.now()}`;
+  const qrUrl = PosExtras.buildCustomerUrl(order, {
+    storeId: $('storeId').value,
+    storeName: state.session?.storeName,
+    source: order.source || 'POS',
+  });
   PosExtras.printReceipt({
     store: {
       name: state.session?.storeName || '店家',
@@ -926,10 +957,23 @@ async function redeemCoupon() {
 
 async function splitTender() {
   if (!state.activeOrderId) { show('orderResult', '尚未建立訂單'); return; }
+  const orderId = state.activeOrderId;
   const first = Math.floor(state.activeOrderTotal / 2);
   const second = state.activeOrderTotal - first;
-  const cash = await api(`/api/v1/orders/${state.activeOrderId}/pay/manual`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'CASH', amount: first, cashReceived: first }) });
-  const card = await api(`/api/v1/orders/${state.activeOrderId}/pay/manual`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'CARD', amount: second, cashReceived: second, cashierMemo: '混合付款第二段，POS 不保存卡號。' }) });
+  // Each leg carries its own idempotencyKey so a network retry / SW-outbox replay
+  // re-applies the same partial payment rather than double-charging.
+  const cash = await api(`/api/v1/orders/${orderId}/pay/manual`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'CASH', amount: first, cashReceived: first, idempotencyKey: newIdempotencyKey() }) });
+  if (cash && cash.queued) {
+    show('orderResult', '已離線：第一段付款已排入補傳佇列，重新連線後會自動送出。請勿重複結帳。');
+    PosExtras?.toast('離線中 — 混合付款已排入佇列', 'warn');
+    return;
+  }
+  const card = await api(`/api/v1/orders/${orderId}/pay/manual`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'CARD', amount: second, idempotencyKey: newIdempotencyKey(), cashierMemo: '混合付款第二段，POS 不保存卡號。' }) });
+  if (card && card.queued) {
+    show('orderResult', '已離線：第二段付款已排入補傳佇列，重新連線後會自動送出。');
+    PosExtras?.toast('離線中 — 第二段付款已排入佇列', 'warn');
+    return;
+  }
   state.lastPaidOrderId = card.orderId;
   state.lastInvoiceId = card.invoice?.invoiceId || state.lastInvoiceId;
   state.cart = [];
@@ -991,7 +1035,7 @@ async function createQrOrder() {
 
 async function createLineOrder() {
   const item = firstProduct();
-  const result = await api('/api/v1/channels/line/orders', { method: 'POST', body: JSON.stringify({ channel: 'LINE', lineChannelToken: `line-token-${Date.now()}`, storeId: $('storeId').value, items: [{ skuId: item.skuId, qty: 1, notes: '少冰' }] }) });
+  const result = await api('/api/v1/channels/line/orders', { method: 'POST', body: JSON.stringify({ channel: 'LINE', lineChannelToken: `line-token-${Date.now()}`, idempotencyKey: `line-${Date.now()}`, storeId: $('storeId').value, items: [{ skuId: item.skuId, qty: 1, notes: '少冰' }] }) });
   if (isQueued(result)) { show('orderResult', '已離線：LINE 訂單已排入補傳佇列。'); PosExtras?.toast('離線 — LINE 訂單已排入', 'warn'); return; }
   state.activeChannelOrderId = result.orderId;
   state.lastChannelOrder = { ...result, source: 'LINE' };
@@ -1029,12 +1073,16 @@ async function confirmChannelOrder() {
 
 async function loadHub() {
   const data = await api(`/api/v1/order-hub?storeId=${encodeURIComponent($('storeId').value)}`);
-  $('hub').innerHTML = '';
-  if (!data.items.length) $('hub').innerHTML = '<article class="empty-state">目前沒有來源單</article>';
+  clear($('hub'));
+  if (!data.items.length) $('hub').appendChild(h('article', { className: 'empty-state', text: '目前沒有來源單' }));
   for (const item of data.items) {
     const card = document.createElement('article');
     card.className = 'hub-card';
-    card.innerHTML = `<strong>${item.orderId}</strong><span>${item.source}</span><span>${item.state}</span><em>${item.paymentState}</em><small>${item.lineItemCount} 項</small>`;
+    card.appendChild(h('strong', { text: item.orderId }));
+    card.appendChild(h('span', { text: item.source }));
+    card.appendChild(h('span', { text: item.state }));
+    card.appendChild(h('em', { text: item.paymentState }));
+    card.appendChild(h('small', { text: `${item.lineItemCount} 項` }));
     $('hub').appendChild(card);
   }
 }
@@ -1107,7 +1155,8 @@ async function loadInvoiceHealth() {
         const banner = document.createElement('div');
         banner.className = 'risk-sandbox-banner';
         banner.setAttribute('role', 'alert');
-        banner.innerHTML = '<strong>沙盒模式</strong><span>此區域顯示之發票資料為沙盒測試，未上傳至加值中心或財政部。請勿視為實際稅務憑證。</span>';
+        banner.appendChild(h('strong', { text: '沙盒模式' }));
+        banner.appendChild(h('span', { text: '此區域顯示之發票資料為沙盒測試，未上傳至加值中心或財政部。請勿視為實際稅務憑證。' }));
         invoicePanel.insertBefore(banner, invoicePanel.firstChild);
       }
     } else if (existing) {
@@ -1308,40 +1357,40 @@ function showInvoiceSettings() {
   const s = state.invoiceSettings;
   const form = document.createElement('form');
   form.className = 'invoice-form';
-  form.innerHTML = `
-    <fieldset style="border:0;padding:0;margin:0">
-      <legend class="eyebrow" style="margin-bottom:.6rem">發票模式</legend>
-      <div class="invoice-mode" role="radiogroup">
-        <label><input type="radio" name="mode" value="B2C"${s.mode === 'B2C' ? ' checked' : ''}>B2C 一般</label>
-        <label><input type="radio" name="mode" value="MOBILE"${s.mode === 'MOBILE' ? ' checked' : ''}>手機條碼</label>
-        <label><input type="radio" name="mode" value="DONATION"${s.mode === 'DONATION' ? ' checked' : ''}>捐贈發票</label>
-        <label><input type="radio" name="mode" value="B2B"${s.mode === 'B2B' ? ' checked' : ''}>B2B 統編</label>
-      </div>
-    </fieldset>
-    <label data-field="carrier">手機條碼 (例：/AB12345)
-      <div class="field-row">
-        <input name="carrier" value="${s.carrier || ''}" placeholder="/XXXXXXX">
-        <span class="validity" data-valid="carrier">—</span>
-      </div>
-    </label>
-    <label data-field="buyerTaxId">買方統一編號 (8 碼)
-      <div class="field-row">
-        <input name="buyerTaxId" value="${s.buyerTaxId || ''}" placeholder="12345675" inputmode="numeric" maxlength="8">
-        <span class="validity" data-valid="buyerTaxId">—</span>
-      </div>
-    </label>
-    <label data-field="donationCode">捐贈碼 (3-7 碼，例：8585 創世)
-      <div class="field-row">
-        <input name="donationCode" value="${s.donationCode || ''}" placeholder="8585" inputmode="numeric" maxlength="7">
-        <span class="validity" data-valid="donationCode">—</span>
-      </div>
-    </label>
-    <p class="note" style="font-size:.82rem;color:var(--muted);line-height:1.6;margin:0">選擇模式後，於結帳時會將載具或統編附加至發票申請。所有變動會留下 audit。</p>
-  `;
+  const modeWrap = h('div', { className: 'invoice-mode', attrs: { role: 'radiogroup' } });
+  [
+    ['B2C', 'B2C 一般'],
+    ['MOBILE', '手機條碼'],
+    ['DONATION', '捐贈發票'],
+    ['B2B', 'B2B 統編'],
+  ].forEach(([value, label]) => {
+    const input = h('input', { attrs: { type: 'radio', name: 'mode', value } });
+    input.checked = s.mode === value;
+    modeWrap.appendChild(h('label', {}, [input, label]));
+  });
+  form.appendChild(h('fieldset', { className: 'invoice-fieldset' }, [
+    h('legend', { className: 'eyebrow invoice-legend', text: '發票模式' }),
+    modeWrap,
+  ]));
+
+  function invoiceField(field, label, attrs) {
+    const input = h('input', { attrs: { name: field, ...attrs } });
+    input.value = s[field] || '';
+    const validity = h('span', { className: 'validity', text: '—', attrs: { 'data-valid': field } });
+    return h('label', { attrs: { 'data-field': field } }, [
+      label,
+      h('div', { className: 'field-row' }, [input, validity]),
+    ]);
+  }
+
+  form.appendChild(invoiceField('carrier', '手機條碼 (例：/AB12345)', { placeholder: '/XXXXXXX' }));
+  form.appendChild(invoiceField('buyerTaxId', '買方統一編號 (8 碼)', { placeholder: '12345675', inputmode: 'numeric', maxlength: '8' }));
+  form.appendChild(invoiceField('donationCode', '捐贈碼 (3-7 碼，例：8585 創世)', { placeholder: '8585', inputmode: 'numeric', maxlength: '7' }));
+  form.appendChild(h('p', { className: 'note invoice-note', text: '選擇模式後，於結帳時會將載具或統編附加至發票申請。所有變動會留下 audit。' }));
   function applyVisibility(mode) {
-    form.querySelector('[data-field="carrier"]').style.display = mode === 'MOBILE' ? 'grid' : 'none';
-    form.querySelector('[data-field="buyerTaxId"]').style.display = mode === 'B2B' ? 'grid' : 'none';
-    form.querySelector('[data-field="donationCode"]').style.display = mode === 'DONATION' ? 'grid' : 'none';
+    form.querySelector('[data-field="carrier"]').hidden = mode !== 'MOBILE';
+    form.querySelector('[data-field="buyerTaxId"]').hidden = mode !== 'B2B';
+    form.querySelector('[data-field="donationCode"]').hidden = mode !== 'DONATION';
   }
   applyVisibility(s.mode);
   function validate() {

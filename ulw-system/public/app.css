@@ -955,6 +955,9 @@ button.wide { width: 100%; }
 
 /* Invoice form extras */
 .invoice-form { display: grid; gap: .65rem; }
+.invoice-form .invoice-fieldset { border: 0; padding: 0; margin: 0; }
+.invoice-form .invoice-legend { margin-bottom: .6rem; }
+.invoice-form .invoice-note { font-size: .82rem; color: var(--muted); line-height: 1.6; margin: 0; }
 .invoice-form .invoice-mode { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; }
 .invoice-form .invoice-mode label { display: flex; align-items: center; gap: .35rem; padding: .5rem .55rem; border-radius: .6rem; background: var(--paper); border: 1px solid var(--line); cursor: pointer; font-size: .82rem; font-weight: 700; color: var(--ink-2); transition: background .15s ease, border-color .15s ease; }
 .invoice-form .invoice-mode label:has(input:checked) { background: var(--jade-soft); border-color: var(--jade); color: var(--jade-3); }
@@ -964,6 +967,15 @@ button.wide { width: 100%; }
 .invoice-form .validity { font-size: .75rem; font-weight: 800; color: var(--muted); padding: .35rem .55rem; border-radius: 999px; background: var(--paper-2); align-self: end; min-height: 2.45rem; display: inline-flex; align-items: center; }
 .invoice-form .validity.ok { background: var(--jade-soft); color: var(--jade-2); }
 .invoice-form .validity.err { background: #fdecec; color: #991b1b; }
+.invoice-form [data-field][hidden] { display: none !important; }
+
+.prod-profile-note {
+  margin: 0;
+  padding: 1rem;
+  color: var(--muted);
+  font-size: .95rem;
+  line-height: 1.6;
+}
 
 /* Toast */
 .toast-root { position: fixed; right: 1rem; bottom: 4.5rem; z-index: 90; display: grid; gap: .5rem; pointer-events: none; }
@@ -980,7 +992,22 @@ button.wide { width: 100%; }
 .toast--ok { background: var(--jade-soft); border-color: rgba(15,138,106,.3); color: var(--jade-3); }
 .toast--warn { background: var(--amber-tint); border-color: rgba(217,119,6,.3); color: #7a3210; }
 .toast--err { background: #fdecec; border-color: rgba(185,28,28,.3); color: #991b1b; }
+.toast--leaving { opacity: 0; transform: translateY(6px); transition: opacity .22s ease, transform .22s ease; }
 @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+.qr-open-link {
+  padding: .65rem 1rem;
+  border: 1px solid var(--line-2);
+  border-radius: .65rem;
+  background: var(--cream);
+  color: var(--ink);
+  font-size: .9rem;
+  font-weight: 800;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.qr-print-button { background: var(--paper-2); }
 
 /* Training mode ribbon */
 .training-ribbon {

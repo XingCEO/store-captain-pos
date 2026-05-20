@@ -17,6 +17,28 @@
 (function (root) {
   'use strict';
 
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function svgEl(name, attrs) {
+    var el = document.createElementNS(SVG_NS, name);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function (key) { el.setAttribute(key, attrs[key]); });
+    return el;
+  }
+
+  function closeIcon() {
+    var svg = svgEl('svg', { width: '20', height: '20', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    svg.appendChild(svgEl('path', { d: 'M6 6 L18 18 M18 6 L6 18', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round' }));
+    return svg;
+  }
+
+  function svgFromString(svg) {
+    var parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    var node = parsed.documentElement;
+    if (!node || node.nodeName.toLowerCase() === 'parsererror') return document.createTextNode('');
+    return document.importNode(node, true);
+  }
+
   // ------------------------------------------------------------
   // Modal infrastructure
   // ------------------------------------------------------------
@@ -104,7 +126,7 @@
     close.type = 'button';
     close.className = 'modal-close';
     close.setAttribute('aria-label', '關閉');
-    close.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    close.appendChild(closeIcon());
     close.addEventListener('click', closeModal);
     head.appendChild(close);
     card.appendChild(head);
@@ -112,14 +134,14 @@
     var body = document.createElement('div');
     body.className = 'modal-body';
     if (opts.body instanceof HTMLElement) body.appendChild(opts.body);
-    else if (typeof opts.body === 'string') body.innerHTML = opts.body;
+    else if (typeof opts.body === 'string') body.textContent = opts.body;
     card.appendChild(body);
 
     if (opts.footer) {
       var foot = document.createElement('div');
       foot.className = 'modal-foot';
       if (opts.footer instanceof HTMLElement) foot.appendChild(opts.footer);
-      else if (typeof opts.footer === 'string') foot.innerHTML = opts.footer;
+      else if (typeof opts.footer === 'string') foot.textContent = opts.footer;
       card.appendChild(foot);
     }
 
@@ -153,9 +175,7 @@
     el.textContent = message;
     t.appendChild(el);
     setTimeout(function () {
-      el.style.transition = 'opacity .22s ease, transform .22s ease';
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(6px)';
+      el.classList.add('toast--leaving');
       setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 240);
     }, tone === 'err' ? 4200 : 2600);
   }
@@ -165,6 +185,8 @@
   // ------------------------------------------------------------
   function buildCustomerUrl(order, extras) {
     extras = extras || {};
+    var token = order.lookupToken || order.customerLookupToken || extras.lookupToken;
+    if (token) return location.origin + '/o.html?t=' + encodeURIComponent(token);
     var params = [];
     function add(k, v) { if (v != null && v !== '') params.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v))); }
     add('id', order.orderId || order.id);
@@ -185,10 +207,19 @@
     var url = buildCustomerUrl(order, extras);
     var svg = root.QRCode.toSVG(url, { scale: 6, margin: 3, ecc: 'M' });
     var body = document.createElement('div');
-    body.innerHTML =
-      '<div class="qr-wrap">' + svg +
-      '<div class="qr-meta"><strong>' + url + '</strong><small>QR 編碼 · ' + (extras.source || order.source || 'QR') + ' 來源 · 訂單 ' + (order.orderId || order.id || '—') + '</small></div>' +
-      '</div>';
+    var wrap = document.createElement('div');
+    wrap.className = 'qr-wrap';
+    wrap.appendChild(svgFromString(svg));
+    var meta = document.createElement('div');
+    meta.className = 'qr-meta';
+    var strong = document.createElement('strong');
+    strong.textContent = url;
+    var small = document.createElement('small');
+    small.textContent = 'QR 編碼 · ' + (extras.source || order.source || 'QR') + ' 來源 · 訂單 ' + (order.orderId || order.id || '—');
+    meta.appendChild(strong);
+    meta.appendChild(small);
+    wrap.appendChild(meta);
+    body.appendChild(wrap);
     var foot = document.createElement('div');
     var openBtn = document.createElement('a');
     openBtn.className = 'ghost';
@@ -196,7 +227,7 @@
     openBtn.target = '_blank';
     openBtn.rel = 'noopener';
     openBtn.textContent = '在新分頁開啟客戶頁';
-    openBtn.style.cssText = 'padding:.65rem 1rem;border-radius:.65rem;background:var(--cream);color:var(--ink);border:1px solid var(--line-2);font-weight:800;font-size:.9rem;text-decoration:none;display:inline-flex;align-items:center;';
+    openBtn.classList.add('qr-open-link');
     var copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.textContent = '複製連結';
@@ -210,7 +241,7 @@
     printBtn.type = 'button';
     printBtn.className = 'ghost';
     printBtn.textContent = '列印 QR';
-    printBtn.style.background = 'var(--paper-2)';
+    printBtn.classList.add('qr-print-button');
     printBtn.addEventListener('click', function () { printQR(url, order, extras); });
     foot.appendChild(copyBtn);
     foot.appendChild(printBtn);
@@ -229,13 +260,13 @@
     var win = target || window.open('', '_blank', 'width=420,height=600');
     if (!win) { toast('瀏覽器封鎖列印視窗 — 請允許彈跳視窗以列印 QR', 'warn'); return; }
     var html = '<!doctype html><html><head><meta charset="utf-8"><title>QR 點餐</title>' +
-      '<style>body{font-family:"Noto Serif TC",serif;text-align:center;padding:2rem;color:#0f1419}.qr svg{width:80mm;height:auto;margin:1rem auto}@media print{@page{size:80mm auto;margin:5mm}}</style>' +
-      '</head><body>' +
-      '<h2 style="margin:0 0 .3rem;font-weight:900">' + escapeHtml(extras.storeName || '') + '</h2>' +
-      '<div style="font-size:.85rem;color:#5b6470">' + escapeHtml(order.orderId || order.id || '') + '</div>' +
+      '<link rel="stylesheet" href="' + printCssHref() + '">' +
+      '</head><body class="print-page print-page--qr">' +
+      '<h2 class="qr-print-title">' + escapeHtml(extras.storeName || '') + '</h2>' +
+      '<div class="qr-print-id">' + escapeHtml(order.orderId || order.id || '') + '</div>' +
       '<div class="qr">' + svg + '</div>' +
-      '<div style="font-size:.78rem;color:#5b6470;word-break:break-all">' + escapeHtml(url) + '</div>' +
-      '<p style="font-size:.78rem;color:#5b6470;margin-top:1.2rem">掃描可開啟訂單詳情</p>' +
+      '<div class="qr-print-url">' + escapeHtml(url) + '</div>' +
+      '<p class="qr-print-note">掃描可開啟訂單詳情</p>' +
       '</body></html>';
     try { win.document.open(); win.document.write(html); win.document.close(); } catch (e) { toast('QR 列印視窗無法寫入', 'err'); return; }
     var doPrint = function () { try { win.focus(); win.print(); } catch (e) {} };
@@ -255,6 +286,8 @@
   function fmtMoney(n) { return Number(n || 0).toLocaleString('zh-TW'); }
   function fmtDate(d) { return (d instanceof Date ? d : new Date(d || Date.now())).toLocaleString('zh-TW'); }
 
+  function printCssHref() { return location.origin + '/print.css'; }
+
   /**
    * printReceipt({ store, order, items, payment, invoice, qrUrl, footer })
    * Renders an 80mm-style receipt and triggers window.print() in a popup.
@@ -269,7 +302,7 @@
     if (!win) return null;
     try {
       win.document.open();
-      win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>準備列印…</title><style>body{font-family:system-ui,sans-serif;padding:2rem;text-align:center;color:#5b6470}.spin{display:inline-block;width:36px;height:36px;border:3px solid #efece1;border-top-color:#0f8a6a;border-radius:50%;animation:s 1s linear infinite;margin-bottom:1rem}@keyframes s{to{transform:rotate(360deg)}}</style></head><body><div class="spin"></div><div>正在準備收據…</div></body></html>');
+      win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>準備列印…</title><link rel="stylesheet" href="' + printCssHref() + '"></head><body class="print-page print-page--loading"><div class="spin"></div><div>正在準備收據…</div></body></html>');
       win.document.close();
     } catch (e) { /* cross-origin or closed */ }
     return win;
@@ -288,25 +321,11 @@
       var price = it.unitPrice != null ? it.unitPrice : (it.price || 0);
       var line = qty * price;
       return '<tr><td>' + escapeHtml(it.name || it.productName || it.skuId) + '</td>' +
-        '<td style="text-align:center">x' + qty + '</td>' +
-        '<td style="text-align:right">' + fmtMoney(line) + '</td></tr>';
+        '<td class="receipt-item-qty">x' + qty + '</td>' +
+        '<td class="receipt-item-amount">' + fmtMoney(line) + '</td></tr>';
     }).join('');
     var html = '<!doctype html><html><head><meta charset="utf-8"><title>收據</title>' +
-      '<style>' +
-      'body{font-family:"Noto Serif TC","Microsoft JhengHei",serif;color:#0f1419;margin:0;padding:6mm 5mm;width:80mm;font-size:11pt}' +
-      'h1{font-size:14pt;text-align:center;margin:0 0 2mm}' +
-      '.meta{text-align:center;font-size:9pt;color:#3a4250;margin-bottom:3mm}' +
-      '.divider{border-top:1px dashed #0f1419;margin:3mm 0}' +
-      'table{width:100%;border-collapse:collapse}' +
-      'td{padding:.5mm 0;font-size:10pt;vertical-align:top}' +
-      '.row{display:flex;justify-content:space-between;font-size:10pt;padding:.4mm 0}' +
-      '.total{font-size:13pt;font-weight:900;margin-top:2mm;display:flex;justify-content:space-between;border-top:2px dashed #0f1419;padding-top:2mm}' +
-      '.invoice{font-size:9pt;margin-top:2mm;color:#3a4250}' +
-      '.qr{text-align:center;margin-top:4mm}' +
-      '.qr svg{width:30mm;height:30mm}' +
-      '.foot{text-align:center;font-size:9pt;color:#5b6470;margin-top:3mm}' +
-      '@media print{@page{size:80mm auto;margin:4mm}body{margin:0}}' +
-      '</style></head><body>' +
+      '<link rel="stylesheet" href="' + printCssHref() + '"></head><body class="print-page print-page--receipt">' +
       '<h1>' + escapeHtml(opts.store && opts.store.name || '店家') + '</h1>' +
       '<div class="meta">' + escapeHtml(opts.store && opts.store.address || '') + '<br>' + escapeHtml(opts.store && opts.store.phone || '') + '</div>' +
       '<div class="row"><span>訂單</span><span>' + escapeHtml(opts.order && opts.order.orderNumber || opts.order && opts.order.id || '') + '</span></div>' +
@@ -318,7 +337,7 @@
       '<div class="row"><span>小計</span><span>NT$' + fmtMoney(opts.order && opts.order.subtotal) + '</span></div>' +
       (opts.order && opts.order.discountTotal ? '<div class="row"><span>折扣</span><span>-NT$' + fmtMoney(opts.order.discountTotal) + '</span></div>' : '') +
       '<div class="total"><span>應收</span><span>NT$' + fmtMoney(opts.order && opts.order.grandTotal) + '</span></div>' +
-      (opts.payment ? '<div class="row" style="margin-top:2mm"><span>付款</span><span>' + escapeHtml(opts.payment.method) + ' NT$' + fmtMoney(opts.payment.amount) + '</span></div>' : '') +
+      (opts.payment ? '<div class="row receipt-payment"><span>付款</span><span>' + escapeHtml(opts.payment.method) + ' NT$' + fmtMoney(opts.payment.amount) + '</span></div>' : '') +
       (opts.payment && opts.payment.change ? '<div class="row"><span>找零</span><span>NT$' + fmtMoney(opts.payment.change) + '</span></div>' : '') +
       (opts.invoice ? '<div class="invoice"><div class="divider"></div>' +
         '發票：' + escapeHtml(opts.invoice.invoiceNumber || '—') + '<br>' +
@@ -326,7 +345,7 @@
         (opts.invoice.carrier ? '載具：' + escapeHtml(opts.invoice.carrier) + '<br>' : '') +
         (opts.invoice.buyerTaxId ? '統一編號：' + escapeHtml(opts.invoice.buyerTaxId) + '<br>' : '') +
         '</div>' : '') +
-      (qrSvg ? '<div class="qr">' + qrSvg + '<div style="font-size:8pt;color:#5b6470;margin-top:1mm">掃描查訂單</div></div>' : '') +
+      (qrSvg ? '<div class="qr">' + qrSvg + '<div class="receipt-qr-note">掃描查訂單</div></div>' : '') +
       '<div class="foot">謝謝光臨 · ' + escapeHtml(opts.footer || '店長 AI POS') + '</div>' +
       '</body></html>';
     try {
@@ -364,7 +383,7 @@
     var a = document.createElement('a');
     a.href = url;
     a.download = filename;
-    a.style.display = 'none';
+    a.hidden = true;
     document.body.appendChild(a);
     a.click();
     setTimeout(function () {
@@ -386,25 +405,47 @@
       ack.textContent = '了解';
       ack.addEventListener('click', closeModal);
       foot.appendChild(ack);
+      var unsupported = document.createElement('div');
+      unsupported.className = 'scanner-result';
+      unsupported.textContent = '不支援的環境：' + navigator.userAgent;
       showModal({
         title: '此瀏覽器不支援掃碼',
         lead: 'BarcodeDetector API 尚未支援。請改用 Chrome 88+ / Edge 88+，或使用 USB 掃碼槍直接輸入到搜尋框。',
-        body: '<div class="scanner-result">不支援的環境：' + escapeHtml(navigator.userAgent) + '</div>',
+        body: unsupported,
         footer: foot,
       });
       return;
     }
     var body = document.createElement('div');
     body.className = 'scanner-wrap';
-    body.innerHTML =
-      '<div class="scanner-frame"><video id="scannerVideo" playsinline muted></video><canvas id="scannerCanvas"></canvas><div class="scanner-overlay"></div></div>' +
-      '<div class="scanner-result" id="scannerResult">對準商品條碼或 QR — 自動辨識</div>';
+    var frame = document.createElement('div');
+    frame.className = 'scanner-frame';
+    var video = document.createElement('video');
+    video.id = 'scannerVideo';
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    var canvas = document.createElement('canvas');
+    canvas.id = 'scannerCanvas';
+    var overlay = document.createElement('div');
+    overlay.className = 'scanner-overlay';
+    frame.appendChild(video);
+    frame.appendChild(canvas);
+    frame.appendChild(overlay);
+    var result = document.createElement('div');
+    result.className = 'scanner-result';
+    result.id = 'scannerResult';
+    result.textContent = '對準商品條碼或 QR — 自動辨識';
+    body.appendChild(frame);
+    body.appendChild(result);
     var foot = document.createElement('div');
-    foot.innerHTML = '<button type="button" class="ghost" id="scannerCancel">取消</button>';
+    var cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'ghost';
+    cancelButton.id = 'scannerCancel';
+    cancelButton.textContent = '取消';
+    foot.appendChild(cancelButton);
     var modal = showModal({ title: '掃碼商品', lead: '使用裝置相機掃描商品條碼或 QR 點餐。', body: body, footer: foot });
 
-    var video = body.querySelector('#scannerVideo');
-    var result = body.querySelector('#scannerResult');
     var cancel = modal.card.querySelector('#scannerCancel');
     var stream = null;
     var stopped = false;
@@ -561,6 +602,7 @@
     printQR: printQR,
     printReceipt: printReceipt,
     preparePrintWindow: preparePrintWindow,
+    buildCustomerUrl: buildCustomerUrl,
     downloadCSV: downloadCSV,
     openScanner: openScanner,
     isValidTaxId: isValidTaxId,

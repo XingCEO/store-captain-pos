@@ -12,7 +12,7 @@
  * Note on idempotency: the server-side runtime already de-duplicates by `idempotencyKey`
  * and `clientRef`, so replaying queued mutations is safe.
  */
-const VERSION = 'sc-v28';
+const VERSION = 'sc-v30';
 const STATIC_CACHE = 'sc-static-' + VERSION;
 const RUNTIME_CACHE = 'sc-runtime-' + VERSION;
 const SHELL = [
@@ -20,14 +20,19 @@ const SHELL = [
   '/product.html',
   '/pricing.html',
   '/login.html',
+  '/login.css',
+  '/login.js',
   '/app.html',
   '/o.html',
+  '/o.css',
+  '/o.js',
   '/terms.html',
   '/privacy.html',
   '/site.css',
   '/site.js',
   '/app.css',
   '/app.js',
+  '/print.css',
   '/lib/qrcode.js',
   '/lib/pos-extras.js',
   '/lib/topbar.js',
@@ -207,7 +212,7 @@ async function networkFirstNav(req) {
   } catch (e) {
     const cached = await cache.match(req);
     if (cached) return cached;
-    return new Response('<!doctype html><meta charset="utf-8"><title>離線</title><body style="font-family:system-ui;padding:2rem;text-align:center"><h1>目前離線</h1><p>請檢查網路後再試。</p></body>', { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    return new Response('<!doctype html><meta charset="utf-8"><title>離線</title><body><main><h1>目前離線</h1><p>請檢查網路後再試。</p></main></body>', { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   }
 }
 
