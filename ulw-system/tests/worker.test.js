@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { tickOutbox } = require('../src/core/syncWorker');
+const { tickOutbox, tickTelemetry } = require('../src/core/syncWorker');
 
 function makeStore() {
   // Minimal Store-like shape
@@ -11,9 +11,12 @@ function makeStore() {
       outboxJobs: new Map(),
       auditLogs: [],
       storeSettings: new Map(),
+      telemetrySnapshots: new Map(),
     },
   };
 }
+
+const isoAgo = (ms) => new Date(Date.now() - ms).toISOString();
 
 test('outbox PENDING advances to IN_FLIGHT then RETRYABLE_ERROR by default', () => {
   const store = makeStore();
@@ -59,4 +62,34 @@ test('outbox retryable state recorded when autoComplete is false', () => {
   tickOutbox(store);
   const job = store.data.outboxJobs.get('job-3');
   assert.equal(job.state, 'RETRYABLE_ERROR');
+});
+
+test('telemetry: a fresh heartbeat stays OK (not instantly UNREACHABLE)', () => {
+  // Regression: the tick used to read snap.lastSeenAt (never written), so age
+  // was ~now and every snapshot was flagged UNREACHABLE on the first tick.
+  const store = makeStore();
+  store.data.telemetrySnapshots.set('t1:term-1', { tenantId: 't1', terminalId: 'term-1', state: 'OK', receivedAt: isoAgo(10 * 1000) });
+  const changed = tickTelemetry(store);
+  assert.equal(store.data.telemetrySnapshots.get('t1:term-1').state, 'OK');
+  assert.equal(changed, false);
+});
+
+test('telemetry: a stale terminal (>5min) is flagged UNREACHABLE with one audit row', () => {
+  const store = makeStore();
+  store.data.telemetrySnapshots.set('t1:term-2', { tenantId: 't1', terminalId: 'term-2', state: 'OK', receivedAt: isoAgo(6 * 60 * 1000) });
+  tickTelemetry(store);
+  assert.equal(store.data.telemetrySnapshots.get('t1:term-2').state, 'UNREACHABLE');
+  const audit = store.data.auditLogs.filter((row) => row.action === 'TELEMETRY_UNREACHABLE');
+  assert.equal(audit.length, 1, 'exactly one unreachable alert');
+  // Idempotent: a second tick must not re-alert (alertedAt gate).
+  tickTelemetry(store);
+  assert.equal(store.data.auditLogs.filter((row) => row.action === 'TELEMETRY_UNREACHABLE').length, 1);
+});
+
+test('telemetry: an UNREACHABLE terminal recovers to OK after a recent heartbeat', () => {
+  const store = makeStore();
+  store.data.telemetrySnapshots.set('t1:term-3', { tenantId: 't1', terminalId: 'term-3', state: 'UNREACHABLE', alertedAt: isoAgo(10 * 60 * 1000), receivedAt: isoAgo(5 * 1000) });
+  const changed = tickTelemetry(store);
+  assert.equal(store.data.telemetrySnapshots.get('t1:term-3').state, 'OK');
+  assert.equal(changed, true);
 });

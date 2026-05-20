@@ -1502,7 +1502,7 @@ async function run(fn, outputId) {
   // running. Without it, a double-click on 送出訂單 / 結帳 fires two requests
   // with distinct idempotency keys, so the server cannot dedupe them and
   // creates a duplicate order or payment.
-  if (_runInFlight) return;
+  if (_runInFlight) { window.PosExtras?.toast('處理中，請稍候…', 'warn'); return; }
   _runInFlight = true;
   try {
     setStatus('處理中', 'busy');

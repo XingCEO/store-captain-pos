@@ -118,7 +118,11 @@ function tickTelemetry(store) {
   const now = Date.now();
 
   for (const [key, snap] of store.data.telemetrySnapshots.entries()) {
-    const age = now - (snap.lastSeenAt || 0);
+    // Heartbeats stamp `receivedAt` (ISO string); there is no `lastSeenAt`.
+    // The old read of `snap.lastSeenAt || 0` made age ≈ now for every snapshot,
+    // so terminals were flagged UNREACHABLE immediately and never recovered.
+    const last = snap.receivedAt ? new Date(snap.receivedAt).getTime() : 0;
+    const age = now - last;
     const currentState = snap.state || 'OK';
 
     if (age > TELEMETRY_UNREACHABLE_MS && currentState !== 'UNREACHABLE') {
