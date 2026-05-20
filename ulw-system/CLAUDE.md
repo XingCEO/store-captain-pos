@@ -16,7 +16,7 @@ curl http://localhost:3100/health
 
 There is no build step. Use `package.json` scripts for lint, test, smoke, and DB helpers. Edits to `src/**` or `public/**` are picked up by restarting the process. The server PID is written to `.server-pid.txt` when started via tooling — kill that PID to stop a stale run before relaunching.
 
-State persists to `data/store.db` via SQLite snapshot tables plus `audit_logs`. Delete the DB files to reset tenants, users, orders, inventory, invoices, sessions back to defaults — `ensureTenantDefaults()` will reseed on next authenticated request.
+State persists to `data/store.db` via the row-level `entities` table (plus `state` for counters, `audit_logs`, and the idempotency/session tables). Delete the DB files to reset tenants, users, orders, inventory, invoices, sessions back to defaults — `ensureTenantDefaults()` will reseed on next authenticated request.
 
 ## Architecture
 
@@ -39,11 +39,12 @@ The runtime is passed to every domain via `register(router, runtime)`. Domains n
 
 ### Store (`runtime.store`)
 
-In-memory Map-per-collection, persisted as JSON. Every mutating request triggers `store.persist()` via the `res.end` wrapper in `server.js` (response status < 400). Important consequences:
+Each operational collection on `store.data.<name>` is a `Repository` (`core/repository.js`) — a Map-compatible facade with an in-memory hot read path plus dirty/deleted tracking. Every mutating request triggers `store.persist()` via the `res.end` wrapper in `server.js` (response status < 400), which flushes **only the changed rows** to the row-level `entities` table (`db.persistEntities`) in one transaction. There is no longer a full-collection JSON snapshot. Important consequences:
 
-- **Never mutate Map entries without setting them back** — `.set(key, {...current, field: v})`. The persist hook only sees the Map, not field-level deltas, but downstream readers expect a fresh object.
-- **IDs come from `runtime.store.nextId(prefix)`** (e.g. `order`, `invoice`, `inventoryMove`). Counters live in `data.counters` and are persisted alongside the Maps.
-- Persistence list is `persistedMaps` in `core/runtime.js` — adding a new collection requires appending the name there or it won't survive restart.
+- **Never mutate entries without setting them back** — `.set(key, {...current, field: v})`. Only `set()`/`delete()` mark a row dirty; an in-place mutation of a `get()` result is **not** flushed. (Same hazard as before, now also required for the dirty tracker to see the write.)
+- **IDs come from `runtime.store.nextId(prefix)`** (e.g. `order`, `invoice`, `inventoryMove`). Counters live in `data.counters`, still persisted as the `__counters__` row in `state`.
+- Persistence list is `persistedMaps` in `core/runtime.js` — adding a new collection requires appending the name there or it won't hydrate/persist. Each row lands in `entities(collection, id, tenant_id, data_json)`; `tenant_id` is denormalised onto the row for indexing.
+- Schema is versioned in `db.js` (`SCHEMA_VERSION`); the v3→v4 bump migrated the old per-collection snapshot blobs into `entities`. Live tables (idempotency/sessions/refresh) remain SqliteBackedMap and are separate from `persistedMaps`.
 
 ### Auth + tenancy
 

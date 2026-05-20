@@ -10,7 +10,7 @@
 |------|----------|-------|
 | Runtime helpers / Store | `runtime.js` | `createRuntime`, `Store`, `requireTenant`, `requireRole`, `requireStoreScope`, `addAudit` |
 | Router | `router.js` | `router.add(method, string|RegExp, handler)` |
-| SQLite / snapshots | `db.js` | map tables, audit table, idempotency/session tables, schema migration |
+| SQLite / persistence | `db.js`, `repository.js` | row-level `entities` table, audit table, idempotency/session tables, schema migration |
 | Security / auth primitives | `security.js`, `mfa.js`, `rateLimit.js`, `middleware.js` | hash, MFA, lockout, CORS/security headers |
 | Observability | `logger.js`, `metrics.js`, `tracing.js`, `sentry.js`, `auditPg.js` | pino, Prometheus, OTEL, Sentry, PG audit mirror |
 | Providers | `paymentProvider.js`, `invoiceProvider.js` | formal adapter boundary; sandbox/go-gate still applies |

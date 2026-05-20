@@ -21,7 +21,7 @@ src/
 |------|----------|-------|
 | Route lifecycle | `server.js`, `core/router.js` | `router.add(method, matcher, handler)` |
 | Core kernel | `core/` | Read `core/AGENTS.md`; runtime, persistence, auth, audit, idempotency, workers |
-| Persist / SQLite | `core/db.js`, `core/runtime.js` | Map snapshot + audit table |
+| Persist / SQLite | `core/db.js`, `core/runtime.js`, `core/repository.js` | row-level `entities` table (per-collection Repository) + audit table |
 | Domain APIs | `domains/` | Read `domains/AGENTS.md`; identity/subscription/catalog/commerce/operations/risk |
 | Background work | `core/syncWorker.js`, `workers/syncWorker.js` | draft expiry, telemetry stale, outbox jobs |
 
