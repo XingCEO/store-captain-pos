@@ -2,6 +2,7 @@ const { normalizeBusinessDate, isValidBusinessDate } = require('../core/tz');
 const paymentProvider = require('../core/paymentProvider');
 const invoiceProvider = require('../core/invoiceProvider');
 const metrics = require('../core/metrics');
+const { signOrderLookupToken } = require('../core/orderLookupToken');
 
 // Invoice lifecycleState FSM. Disallowed transitions are rejected to prevent
 // fields drifting via partial-update bugs. Used by ensureInvoice + future
@@ -60,6 +61,7 @@ function orderResponse(runtime, order) {
     discountTotal: order.discountTotal || 0,
     taxTotal: order.taxTotal || 0,
     grandTotal: order.grandTotal || 0,
+    lookupToken: signOrderLookupToken(order),
   };
 }
 
@@ -212,7 +214,7 @@ function register(router, runtime) {
     store.data.outboxJobs.set(outbox.id, outbox);
     const event = { id: store.nextId('orderEvent'), tenantId: ctx.tenantId, orderId, eventType: 'ORDER_CREATED', actorId: ctx.userId, at, payloadFingerprint: outbox.payloadFingerprint, meta: { orderNumber: order.orderNumber, subtotal, grandTotal: order.grandTotal } };
     store.data.orderEvents.set(orderId, [event]);
-    const response = { id: order.id, orderNumber: order.orderNumber, state: order.state, currency: 'TWD', subtotal, discountTotal, taxTotal: 0, grandTotal: order.grandTotal, createdAt: at, sync: { jobId: outbox.id, state: outbox.state }, items: lineRecords.map((line) => ({ id: line.id, skuId: line.skuId, name: line.name, qty: line.qty, unitPrice: line.unitPrice, subtotal: line.subtotal })), duplicated: false };
+    const response = { id: order.id, orderNumber: order.orderNumber, state: order.state, currency: 'TWD', subtotal, discountTotal, taxTotal: 0, grandTotal: order.grandTotal, createdAt: at, sync: { jobId: outbox.id, state: outbox.state }, items: lineRecords.map((line) => ({ id: line.id, skuId: line.skuId, name: line.name, qty: line.qty, unitPrice: line.unitPrice, subtotal: line.subtotal })), lookupToken: signOrderLookupToken(order), duplicated: false };
     store.data.orderIdempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), orderId, response });
     runtime.addAudit(ctx, 'ORDER_CREATED', 'order', orderId, null, { id: order.id, orderNumber: order.orderNumber, state: order.state, storeId: order.storeId, itemCount: lineRecords.length, subtotal: order.subtotal, discountTotal: order.discountTotal, grandTotal: order.grandTotal, createdBy: order.createdBy, createdAt: order.createdAt });
     try {
@@ -245,6 +247,19 @@ function register(router, runtime) {
     if (!order || order.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('ORDER_NOT_FOUND', 'order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
     const body = await runtime.parseBody(req);
+    const { idempotencyKey } = body;
+    // Business-layer idempotency: a retried (or SW-outbox-replayed) payment must not
+    // create a second payment row. Full payment is already guarded by the PAID state
+    // check below, but a PARTIALLY_PAID order would otherwise accept a duplicate charge.
+    if (idempotencyKey) {
+      const idemKey = `${ctx.tenantId}:${order.storeId}:pay:${idempotencyKey}`;
+      const previous = store.data.idempotency.get(idemKey);
+      if (previous) {
+        if (previous.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previous.response, duplicated: true }); return; }
+        runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch'));
+        return;
+      }
+    }
     const amount = Number(body.amount);
     const method = body.paymentMethod || 'CASH';
     const cashReceived = Number(body.cashReceived ?? amount);
@@ -318,7 +333,12 @@ function register(router, runtime) {
       metrics.ordersStateTotal.inc({ state: next.state });
       if (invoice) metrics.invoicesIssuedTotal.inc({ provider: invoice.providerCode || 'UNKNOWN', lifecycle: invoice.lifecycleState });
     } catch { /* metric optional */ }
-    runtime.json(res, 200, { orderId: order.id, state: next.state, paymentState: next.paymentState, paymentSummary: { method, amount, received: payment.received, change: payment.change, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), providerTransactionId: payment.providerTransactionId, authorizationCode: payment.authorizationCode, settlementState: payment.settlementState, paymentProvider: payment.paymentProvider, fee: payment.fee, netSettledAmount: payment.netSettledAmount }, invoice: invoice ? { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState } : null, printQueueId: printJobId });
+    const response = { orderId: order.id, state: next.state, paymentState: next.paymentState, paymentSummary: { method, amount, received: payment.received, change: payment.change, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), providerTransactionId: payment.providerTransactionId, authorizationCode: payment.authorizationCode, settlementState: payment.settlementState, paymentProvider: payment.paymentProvider, fee: payment.fee, netSettledAmount: payment.netSettledAmount }, invoice: invoice ? { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState } : null, printQueueId: printJobId };
+    if (idempotencyKey) {
+      const idemKey = `${ctx.tenantId}:${order.storeId}:pay:${idempotencyKey}`;
+      store.data.idempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), response });
+    }
+    runtime.json(res, 200, response);
   });
 
   router.add('POST', /^\/api\/v1\/orders\/([\w-]+)\/refund$/, async ({ req, res, ctx, params }) => {

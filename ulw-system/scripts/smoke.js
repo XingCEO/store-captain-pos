@@ -348,13 +348,17 @@ async function runTests() {
       idempotencyKey: `smoke-card-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(orderRes.status, 201);
+    // Pay the server-computed grandTotal (server enforces its own SKU price, so the
+    // client-sent unitPrice is ignored). MOCK_CARD_PSP fee is 2.0% (200 bps), ceil-rounded.
+    const dueAmount = orderRes.body.grandTotal;
+    const expectedFee = Math.ceil((dueAmount * 200) / 10_000);
     const pay = await request('POST', `/api/v1/orders/${orderRes.body.id}/pay/manual`, {
-      amount: 200, paymentMethod: 'CARD', cashReceived: 200,
+      amount: dueAmount, paymentMethod: 'CARD', cashReceived: dueAmount,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.equal(pay.body.paymentSummary.paymentProvider, 'MOCK_CARD_PSP');
-    assert.equal(pay.body.paymentSummary.fee, 4);
-    assert.equal(pay.body.paymentSummary.netSettledAmount, 196);
+    assert.equal(pay.body.paymentSummary.fee, expectedFee);
+    assert.equal(pay.body.paymentSummary.netSettledAmount, dueAmount - expectedFee);
   });
 
   // Test 13: Refresh token rotation issues new bearer
