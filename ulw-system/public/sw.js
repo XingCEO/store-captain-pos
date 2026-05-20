@@ -12,7 +12,7 @@
  * Note on idempotency: the server-side runtime already de-duplicates by `idempotencyKey`
  * and `clientRef`, so replaying queued mutations is safe.
  */
-const VERSION = 'sc-v30';
+const VERSION = 'sc-v31';
 const STATIC_CACHE = 'sc-static-' + VERSION;
 const RUNTIME_CACHE = 'sc-runtime-' + VERSION;
 const SHELL = [

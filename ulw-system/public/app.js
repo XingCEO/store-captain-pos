@@ -452,7 +452,10 @@ function addToCart(product, opts = {}) {
   const qty = Math.max(1, Number(opts.qty || 1));
   const modifiers = (opts.modifiers || []).slice();
   const addons = (opts.addons || []).slice();
-  const _key = product.skuId + ':' + modifiers.slice().sort().join(',') + '|' + addons.slice().sort().join(',');
+  // JSON-serialise the sorted option arrays so a modifier/addon value that
+  // itself contains ',' or '|' cannot collide two distinct combos into one
+  // cart line. _key is session-only (the server receives the arrays directly).
+  const _key = product.skuId + ':' + JSON.stringify(modifiers.slice().sort()) + '|' + JSON.stringify(addons.slice().sort());
   const existing = state.cart.find((item) => item._key === _key);
   if (existing) existing.qty += qty;
   else state.cart.push({
@@ -910,9 +913,12 @@ function autoPrintReceipt(order, payment, invoice, printWindow) {
   });
   PosExtras.printReceipt({
     store: {
+      // Use the store's configured contact info when available; never print
+      // fabricated demo address/phone on a real receipt. printReceipt renders
+      // an empty meta line gracefully when these are blank.
       name: state.session?.storeName || '店家',
-      address: '示範地址',
-      phone: '02-0000-0000',
+      address: state.storeSettings?.address || '',
+      phone: state.storeSettings?.phone || '',
     },
     order: {
       orderNumber: order.orderNumber || order.orderId || order.id,
@@ -1290,7 +1296,11 @@ async function importCatalog() { show('catalogResult', await api('/api/v1/catalo
 
 async function loadUsers() { show('settingsResult', await api('/api/v1/users')); }
 async function createUser() { show('settingsResult', await api('/api/v1/users', { method: 'POST', body: JSON.stringify({ name: $('newUserName').value, role: 'CASHIER', pin: $('newUserPin').value, storeIds: [$('storeId').value] }) })); }
-async function loadStoreSettings() { show('settingsResult', await api(`/api/v1/settings/store?storeId=${encodeURIComponent($('storeId').value)}`)); }
+async function loadStoreSettings() {
+  const settings = await api(`/api/v1/settings/store?storeId=${encodeURIComponent($('storeId').value)}`);
+  state.storeSettings = settings && !settings.queued ? settings : state.storeSettings;
+  show('settingsResult', settings);
+}
 
 async function loadAiBrief() { show('aiResult', await api('/api/v1/ai/daily-brief')); }
 
@@ -1486,7 +1496,14 @@ function switchView(viewId) {
   for (const button of document.querySelectorAll('.nav-button')) button.classList.toggle('active', button.dataset.view === viewId);
 }
 
+let _runInFlight = false;
 async function run(fn, outputId) {
+  // Single in-flight guard: drop re-entrant clicks while an operation is
+  // running. Without it, a double-click on 送出訂單 / 結帳 fires two requests
+  // with distinct idempotency keys, so the server cannot dedupe them and
+  // creates a duplicate order or payment.
+  if (_runInFlight) return;
+  _runInFlight = true;
   try {
     setStatus('處理中', 'busy');
     await fn();
@@ -1495,6 +1512,8 @@ async function run(fn, outputId) {
     const message = friendlyError(error);
     if (outputId) show(outputId, message);
     setStatus(message, 'error');
+  } finally {
+    _runInFlight = false;
   }
 }
 
