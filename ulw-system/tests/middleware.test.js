@@ -12,6 +12,7 @@ test('security headers present on every response', async () => {
     assert.equal(res.headers['x-content-type-options'], 'nosniff');
     assert.match(res.headers['referrer-policy'], /strict-origin/);
     assert.ok(res.headers['content-security-policy'], 'CSP header missing');
+    assert.doesNotMatch(res.headers['content-security-policy'], /unsafe-inline/);
   } finally {
     await stopTestServer(ctx);
   }

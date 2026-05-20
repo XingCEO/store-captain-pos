@@ -6,8 +6,8 @@
 
 const DEFAULT_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
+  "style-src 'self'",
   "img-src 'self' data:",
   "connect-src 'self'",
   "font-src 'self' data:",

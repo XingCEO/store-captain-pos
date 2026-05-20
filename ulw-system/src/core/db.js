@@ -130,7 +130,32 @@ function loadSnapshot(db) {
   });
 }
 
-function persistSnapshot(db, { maps, counters }) {
+function insertAuditRows(db, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT INTO audit_logs(tenant_id, action, resource_type, resource_id, actor, user_id, user_role, before_json, after_json, ip, device_id, user_agent, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const row of rows) {
+    stmt.run(
+      row.tenantId || null,
+      row.action,
+      row.resourceType || null,
+      row.resourceId || null,
+      row.actor || null,
+      row.userId || null,
+      row.userRole || null,
+      row.before == null ? null : JSON.stringify(row.before),
+      row.after == null ? null : JSON.stringify(row.after),
+      row.ip || null,
+      row.deviceId || null,
+      row.userAgent || null,
+      row.timestamp,
+    );
+  }
+}
+
+function persistSnapshot(db, { maps, counters, auditRows = [] }) {
   return timed('persist_snapshot', () => {
     const upsert = db.prepare(`
       INSERT INTO state(name, value, updated_at)
@@ -149,6 +174,7 @@ function persistSnapshot(db, { maps, counters }) {
       }
       upsert.run('__counters__', JSON.stringify(counters), now);
       deleteLegacy.run('__auditLogs__'); // migrate-away: no longer stored as blob
+      insertAuditRows(db, auditRows);
       upsertMeta.run('saved_at', now);
     });
     tx();
@@ -157,25 +183,7 @@ function persistSnapshot(db, { maps, counters }) {
 
 function appendAuditLog(db, row) {
   return timed('audit_insert', () => {
-    const stmt = db.prepare(`
-      INSERT INTO audit_logs(tenant_id, action, resource_type, resource_id, actor, user_id, user_role, before_json, after_json, ip, device_id, user_agent, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      row.tenantId || null,
-      row.action,
-      row.resourceType || null,
-      row.resourceId || null,
-      row.actor || null,
-      row.userId || null,
-      row.userRole || null,
-      row.before == null ? null : JSON.stringify(row.before),
-      row.after == null ? null : JSON.stringify(row.after),
-      row.ip || null,
-      row.deviceId || null,
-      row.userAgent || null,
-      row.timestamp,
-    );
+    insertAuditRows(db, [row]);
   });
 }
 
