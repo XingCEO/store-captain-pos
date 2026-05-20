@@ -14,6 +14,7 @@ const metrics = require('./metrics');
 const rateLimit = require('./rateLimit');
 const auditPg = require('./auditPg');
 const { hashPin } = require('./security');
+const { Repository } = require('./repository');
 
 const roleRank = {
   GUEST: 0,
@@ -71,7 +72,10 @@ function nowIso() {
 function createData() {
   const data = { auditLogs: [] };
   for (const name of persistedMaps) {
-    data[name] = new Map();
+    // Operational collections flow through the Repository seam (in-memory
+    // Map backing in Phase A). Live tables (idempotency/sessions) are wired
+    // separately in the Store constructor via SqliteBackedMap.
+    data[name] = new Repository(name);
   }
   return data;
 }
@@ -230,7 +234,7 @@ class Store {
     }
     for (const name of persistedMaps) {
       const entries = Array.isArray(snap.maps[name]) ? snap.maps[name] : [];
-      this.data[name] = new Map(entries);
+      this.data[name] = new Repository(name, entries);
     }
     this.data.auditLogs = [];
     // Migrate legacy v1 blob auditLogs into the audit_logs table once.
@@ -262,8 +266,7 @@ class Store {
 
   flushAuditBuffer() {
     if (!this.data.auditLogs.length) return 0;
-    const rows = this.data.auditLogs;
-    this.data.auditLogs = [];
+    const rows = [...this.data.auditLogs];
     // Always write to SQLite (canonical local store). When AUDIT_BACKEND=pg
     // also mirror to Postgres so audit-logs queries can be served from PG
     // with RLS enforced — see auditPg.queryAuditLogs.
@@ -274,6 +277,7 @@ class Store {
       }
     });
     tx();
+    this.data.auditLogs.splice(0, rows.length);
     if (auditPg.isEnabled()) {
       // Tracked fire-and-forget — PG mirror is best-effort; SQLite remains
       // source of truth. close()/drain() await outstanding writes.
@@ -299,9 +303,22 @@ class Store {
         for (const name of persistedMaps) {
           maps[name] = [...this.data[name].entries()];
         }
+        const auditRows = [...this.data.auditLogs];
         try {
-          persistSnapshot(this.db, { maps, counters: this.counters });
-          this.flushAuditBuffer();
+          persistSnapshot(this.db, { maps, counters: this.counters, auditRows });
+          if (auditRows.length) {
+            this.data.auditLogs.splice(0, auditRows.length);
+            for (const row of auditRows) {
+              try { metrics.auditLogsTotal.inc({ action: row.action }); } catch { /* metric optional */ }
+            }
+            if (auditPg.isEnabled()) {
+              auditPg.track(
+                auditPg.appendAuditLogs(auditRows).catch((err) => {
+                  logger.error({ err: err.message, count: auditRows.length }, 'audit pg mirror failed');
+                })
+              );
+            }
+          }
         } catch (err) {
           logger.error({ err: err.message }, 'store persist failed');
           throw err;
