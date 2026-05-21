@@ -61,7 +61,7 @@ test('end-to-end: paid order issues invoice via provider', async () => {
     }, { Authorization: `Bearer ${token}` });
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `ip-pay-1-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.ok(pay.body.invoice);
@@ -82,7 +82,7 @@ test('/invoices/:id/upload-attempt succeeds via provider', async () => {
       idempotencyKey: `ip-upl-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `ip-pay-2-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     // Issue happens automatically — but ISSUED_SANDBOX is not on PENDING_UPLOAD,
     // so first transition is via the FSM: PENDING_UPLOAD on uploadState meanwhile
@@ -113,7 +113,7 @@ test('/invoices/:id/upload-attempt retryable failure returns 503 + UPLOAD_FAILED
       idempotencyKey: `ip-fail-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `ip-pay-3-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     const invoiceId = pay.body.invoice.invoiceId;
     // Move ISSUED_SANDBOX → UPLOAD_PENDING first
@@ -137,7 +137,7 @@ test('upload-attempt rejects invalid FSM transition', async () => {
       idempotencyKey: `ip-fsm-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `ip-pay-4-${Date.now()}`,
     }, { Authorization: `Bearer ${cashier}` });
     const invoiceId = pay.body.invoice.invoiceId;
     // ISSUED_SANDBOX → UPLOADED is not allowed (must go via UPLOAD_PENDING)

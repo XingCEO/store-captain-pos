@@ -167,6 +167,7 @@ async function runTests() {
         amount: 55,
         paymentMethod: 'CASH',
         cashReceived: 55,
+        idempotencyKey: `smoke-pay-${Date.now()}`,
       },
       {
         Authorization: `Bearer ${token}`,
@@ -281,6 +282,7 @@ async function runTests() {
         amount: 55,
         paymentMethod: 'CASH',
         cashReceived: 55,
+        idempotencyKey: `smoke-cashier-pay-${Date.now()}`,
       },
       {
         Authorization: `Bearer ${cashierToken}`,
@@ -354,6 +356,7 @@ async function runTests() {
     const expectedFee = Math.ceil((dueAmount * 200) / 10_000);
     const pay = await request('POST', `/api/v1/orders/${orderRes.body.id}/pay/manual`, {
       amount: dueAmount, paymentMethod: 'CARD', cashReceived: dueAmount,
+      idempotencyKey: `smoke-card-pay-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.equal(pay.body.paymentSummary.paymentProvider, 'MOCK_CARD_PSP');

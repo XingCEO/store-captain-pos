@@ -71,7 +71,7 @@ test('pay/manual transitions order to PAID_CASH', async () => {
     const auth = { Authorization: `Bearer ${token}` };
     const create = await request(ctx.port, 'POST', '/api/v1/orders', orderBody(skuId, 'pay-key'), auth);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: 'pay-paidcash-k1',
     }, auth);
     assert.equal(pay.status, 200);
     assert.equal(pay.body.state, 'PAID_CASH');
@@ -98,7 +98,7 @@ test('pay/manual out-of-stock rejection leaves no payment side effect', async ()
     }, auth);
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: create.body.grandTotal, paymentMethod: 'CASH', cashReceived: create.body.grandTotal,
+      amount: create.body.grandTotal, paymentMethod: 'CASH', cashReceived: create.body.grandTotal, idempotencyKey: 'pay-stock-atomic-k1',
     }, auth);
     assert.equal(pay.status, 409);
     assert.equal(pay.body.errorCode, 'OUT_OF_STOCK');

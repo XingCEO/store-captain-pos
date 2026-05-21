@@ -74,7 +74,7 @@ export default function (data) {
   const orderId = create.json('id');
   const t1 = Date.now();
   const pay = http.post(`${BASE}/api/v1/orders/${orderId}/pay/manual`, JSON.stringify({
-    amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+    amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `pay-${Date.now()}-${orderId}`,
   }), { headers });
   payLatency.add(Date.now() - t1);
   check(pay, { 'pay 200': (r) => r.status === 200 });

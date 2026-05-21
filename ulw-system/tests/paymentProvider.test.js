@@ -97,7 +97,7 @@ test('/pay/manual via CASH still produces PAID_CASH (provider integration)', asy
     }, { Authorization: `Bearer ${token}` });
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 55, paymentMethod: 'CASH', cashReceived: 55,
+      amount: 55, paymentMethod: 'CASH', cashReceived: 55, idempotencyKey: `pp-pay-cash-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.equal(pay.body.state, 'PAID_CASH');
@@ -122,7 +122,7 @@ test('/pay/manual via CARD returns provider txn, auth, fee, netSettled', async (
     }, { Authorization: `Bearer ${token}` });
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
-      amount: 110, paymentMethod: 'CARD', cashReceived: 110,
+      amount: 110, paymentMethod: 'CARD', cashReceived: 110, idempotencyKey: `pp-pay-card-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 200);
     assert.equal(pay.body.state, 'PAID_PENDING');
@@ -148,7 +148,7 @@ test('/pay/manual CARD with simulate=decline returns 402 PAYMENT_DECLINED', asyn
     assert.equal(create.status, 201);
     const pay = await request(ctx.port, 'POST', `/api/v1/orders/${create.body.id}/pay/manual`, {
       amount: 55, paymentMethod: 'CARD', cashReceived: 55,
-      providerMetadata: { simulate: 'decline' },
+      providerMetadata: { simulate: 'decline' }, idempotencyKey: `pp-pay-decline-${Date.now()}`,
     }, { Authorization: `Bearer ${token}` });
     assert.equal(pay.status, 402);
     assert.equal(pay.body.errorCode, 'PAYMENT_DECLINED');

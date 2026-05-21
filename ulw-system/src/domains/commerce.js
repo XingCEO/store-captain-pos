@@ -108,7 +108,13 @@ function paidOrders(runtime, ctx, storeId = null, from = null, to = null) {
 }
 
 function paymentsTotal(runtime, orderId) {
-  return paymentsFor(runtime, orderId).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  // Only CAPTURED payments count toward the paid total. A QR charge that is
+  // still PENDING_CUSTOMER_SCAN is recorded with status 'PENDING' and must not
+  // be treated as money received (otherwise the order would be marked PAID and
+  // an invoice issued before the customer has actually scanned/paid).
+  return paymentsFor(runtime, orderId)
+    .filter((payment) => payment.status !== 'PENDING')
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
 }
 
 function invoiceForOrder(runtime, orderId) {
@@ -246,19 +252,20 @@ function register(router, runtime) {
     const order = store.data.orders.get(params[0]);
     if (!order || order.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('ORDER_NOT_FOUND', 'order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
     const { idempotencyKey } = body;
-    // Business-layer idempotency: a retried (or SW-outbox-replayed) payment must not
-    // create a second payment row. Full payment is already guarded by the PAID state
-    // check below, but a PARTIALLY_PAID order would otherwise accept a duplicate charge.
-    if (idempotencyKey) {
-      const idemKey = `${ctx.tenantId}:${order.storeId}:pay:${idempotencyKey}`;
-      const previous = store.data.idempotency.get(idemKey);
-      if (previous) {
-        if (previous.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previous.response, duplicated: true }); return; }
-        runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch'));
-        return;
-      }
+    // Business-layer idempotency is mandatory (CLAUDE.md: orders/payments/refunds
+    // require idempotencyKey). A retried or SW-outbox-replayed payment must not
+    // create a second payment row — most dangerous on a PARTIALLY_PAID order,
+    // which the PAID-state guard below does not protect.
+    if (!String(idempotencyKey || '').trim()) { runtime.json(res, 400, runtime.error('IDEMPOTENCY_KEY_MISMATCH', 'Idempotency key required')); return; }
+    const payIdemKey = `${ctx.tenantId}:${order.storeId}:pay:${idempotencyKey}`;
+    const previousPay = store.data.idempotency.get(payIdemKey);
+    if (previousPay) {
+      if (previousPay.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previousPay.response, duplicated: true }); return; }
+      runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch'));
+      return;
     }
     const amount = Number(body.amount);
     const method = body.paymentMethod || 'CASH';
@@ -294,6 +301,39 @@ function register(router, runtime) {
       const code = err.errorCode || 'PAYMENT_DECLINED';
       runtime.addAudit(ctx, 'PAYMENT_DECLINED', 'order', order.id, null, { method, amount, providerCode: provider.code, reason: err.message });
       runtime.json(res, 402, runtime.error(code, err.message || 'payment declined by provider'));
+      return;
+    }
+    // QR / wallet charge not yet confirmed by the customer (dynamic QR shown,
+    // customer has not scanned). This is NOT money received: record a PENDING
+    // payment, do not decrement inventory, do not issue an invoice, do not mark
+    // the order PAID. A settlement-confirm step (real-gateway webhook, gated)
+    // would later capture it. paymentsTotal() excludes PENDING rows.
+    if (providerResult.settlementState === 'PENDING_CUSTOMER_SCAN') {
+      const pendingPayment = {
+        id: paymentId, tenantId: ctx.tenantId, orderId: order.id, method,
+        paymentProvider: provider.code,
+        providerTransactionId: providerResult.providerTransactionId,
+        authorizationCode: providerResult.authorizationCode || null,
+        amount, received: 0, change: 0,
+        status: 'PENDING',
+        settlementState: providerResult.settlementState,
+        fee: providerResult.fee || 0,
+        netSettledAmount: providerResult.netSettledAmount || 0,
+        correlationId: `corr-${paymentId}`,
+        cashierMemo: body.cashierMemo || null,
+        providerRaw: providerResult.raw || null,
+        createdAt: at, createdBy: ctx.userId,
+      };
+      store.data.payments.set(paymentId, pendingPayment);
+      const pendingNext = { ...order, state: 'PAYMENT_PENDING', paymentState: order.paymentState === 'PARTIALLY_PAID' ? 'PARTIALLY_PAID' : 'PENDING', updatedAt: at };
+      store.data.orders.set(order.id, pendingNext);
+      appendOrderEvent(runtime, ctx, order.id, 'ORDER_PAYMENT_PENDING', { paymentId, method, amount, settlementState: providerResult.settlementState });
+      runtime.addAudit(ctx, 'ORDER_PAYMENT_PENDING', 'order', order.id,
+        { id: order.id, state: order.state, paymentState: order.paymentState },
+        { id: pendingNext.id, state: pendingNext.state, paymentState: pendingNext.paymentState, payment: { method, amount, status: 'PENDING', settlementState: providerResult.settlementState, providerTransactionId: pendingPayment.providerTransactionId } });
+      const pendingResponse = { orderId: order.id, state: pendingNext.state, paymentState: pendingNext.paymentState, pending: true, paymentSummary: { method, amount, status: 'PENDING', settlementState: providerResult.settlementState, providerTransactionId: pendingPayment.providerTransactionId, paymentProvider: provider.code } };
+      store.data.idempotency.set(payIdemKey, { fingerprint: runtime.requestFingerprint(body), response: pendingResponse });
+      runtime.json(res, 200, pendingResponse);
       return;
     }
     // correlationId is server-generated. Client cannot inject — prevents
@@ -334,10 +374,7 @@ function register(router, runtime) {
       if (invoice) metrics.invoicesIssuedTotal.inc({ provider: invoice.providerCode || 'UNKNOWN', lifecycle: invoice.lifecycleState });
     } catch { /* metric optional */ }
     const response = { orderId: order.id, state: next.state, paymentState: next.paymentState, paymentSummary: { method, amount, received: payment.received, change: payment.change, paidTotal: nextPaid, due: Math.max(0, (order.grandTotal || 0) - nextPaid), providerTransactionId: payment.providerTransactionId, authorizationCode: payment.authorizationCode, settlementState: payment.settlementState, paymentProvider: payment.paymentProvider, fee: payment.fee, netSettledAmount: payment.netSettledAmount }, invoice: invoice ? { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, uploadState: invoice.uploadState } : null, printQueueId: printJobId };
-    if (idempotencyKey) {
-      const idemKey = `${ctx.tenantId}:${order.storeId}:pay:${idempotencyKey}`;
-      store.data.idempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), response });
-    }
+    store.data.idempotency.set(payIdemKey, { fingerprint: runtime.requestFingerprint(body), response });
     runtime.json(res, 200, response);
   });
 
@@ -346,16 +383,19 @@ function register(router, runtime) {
     const order = store.data.orders.get(params[0]);
     if (!order || order.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('ORDER_NOT_FOUND', 'order not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
     const { idempotencyKey } = body;
-    if (idempotencyKey) {
-      const idemKey = `${ctx.tenantId}:${order.storeId}:refund:${idempotencyKey}`;
-      const previous = store.data.idempotency.get(idemKey);
-      if (previous) {
-        if (previous.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previous.response, duplicated: true }); return; }
-        runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch'));
-        return;
-      }
+    // Refund idempotency is mandatory — a replayed refund (SW outbox drain,
+    // double-tap) must not create a second refund row or trigger a second
+    // gateway reversal.
+    if (!String(idempotencyKey || '').trim()) { runtime.json(res, 400, runtime.error('IDEMPOTENCY_KEY_MISMATCH', 'Idempotency key required')); return; }
+    const refundIdemKey = `${ctx.tenantId}:${order.storeId}:refund:${idempotencyKey}`;
+    const previousRefund = store.data.idempotency.get(refundIdemKey);
+    if (previousRefund) {
+      if (previousRefund.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previousRefund.response, duplicated: true }); return; }
+      runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch'));
+      return;
     }
     const amount = Number(body.amount);
     const paid = paymentsTotal(runtime, order.id);
@@ -365,7 +405,31 @@ function register(router, runtime) {
     if (!['CUSTOMER_RETURN', 'WRONG_ITEM', 'SERVICE_RECOVERY'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('REFUND_AMOUNT_INVALID', 'reasonCode invalid')); return; }
     const refundId = store.nextId('refund');
     const at = runtime.nowIso();
-    const refund = { id: refundId, tenantId: ctx.tenantId, orderId: order.id, storeId: order.storeId, amount, reasonCode: body.reasonCode, method: body.method || 'CASH', status: 'APPROVED_MANUAL', restock: Boolean(body.restock), createdBy: ctx.userId, createdAt: at };
+    // Refund leg through the payment provider. For CARD/QR/MOBILE this is the
+    // gateway reversal; the POS never moves the money itself. Use the original
+    // captured payment to recover the provider txn + method. Provider failure
+    // aborts the refund (no local refund row written) so we never record a
+    // refund that the gateway did not accept.
+    const capturedPayments = paymentsFor(runtime, order.id).filter((p) => p.status !== 'PENDING');
+    const originalPayment = capturedPayments[capturedPayments.length - 1] || null;
+    const refundMethod = body.method || (originalPayment ? originalPayment.method : 'CASH');
+    const refundProvider = paymentProvider.defaultProviderFor(refundMethod);
+    if (!refundProvider || typeof refundProvider.refund !== 'function') { runtime.json(res, 400, runtime.error('REFUND_AMOUNT_INVALID', `no refund provider for method ${refundMethod}`)); return; }
+    let providerRefund;
+    try {
+      providerRefund = await refundProvider.refund({
+        tenantId: ctx.tenantId,
+        orderId: order.id,
+        amount,
+        method: refundMethod,
+        originalProviderTransactionId: originalPayment ? originalPayment.providerTransactionId : null,
+      });
+    } catch (err) {
+      runtime.addAudit(ctx, 'REFUND_PROVIDER_FAILED', 'order', order.id, null, { method: refundMethod, amount, providerCode: refundProvider.code, reason: err.message });
+      runtime.json(res, 402, runtime.error(err.errorCode || 'REFUND_PROVIDER_FAILED', err.message || 'refund declined by provider'));
+      return;
+    }
+    const refund = { id: refundId, tenantId: ctx.tenantId, orderId: order.id, storeId: order.storeId, amount, reasonCode: body.reasonCode, method: refundMethod, status: 'APPROVED_MANUAL', restock: Boolean(body.restock), paymentProvider: refundProvider.code, providerRefundId: providerRefund.providerRefundId || null, providerRefundStatus: providerRefund.status || null, createdBy: ctx.userId, createdAt: at };
     const next = { ...order, state: amount === paid - refunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundTotal: refunded + amount, updatedAt: at };
     if (refund.restock) {
       // applyInventoryForOrder may fail only if the increment would push another
@@ -387,18 +451,41 @@ function register(router, runtime) {
     appendOrderEvent(runtime, ctx, order.id, 'ORDER_REFUNDED', { refundId, amount, reasonCode: body.reasonCode, restock: refund.restock });
     const invoice = invoiceForOrder(runtime, order.id);
     if (invoice) {
-      const allowanceId = store.nextId('allowance');
-      store.data.invoiceAllowances.set(allowanceId, { id: allowanceId, tenantId: ctx.tenantId, invoiceId: invoice.id, orderId: order.id, amount, state: 'ALLOWANCE_CREATED_SANDBOX', reasonCode: body.reasonCode, createdAt: at, createdBy: ctx.userId });
+      // 折讓 must round-trip the invoice provider, not just write a local record.
+      const invProvider = invoiceProvider.active();
+      const alreadyUploaded = invoice.lifecycleState === 'UPLOADED' || invoice.lifecycleState === 'ALLOWANCE';
+      const expectedLifecycle = alreadyUploaded ? 'ALLOWANCE' : 'ALLOWANCE_SANDBOX';
+      // FSM pre-check before touching the provider — issuing a provider-side
+      // allowance we cannot reflect locally would desync the invoice. Parity
+      // with the void-sandbox path, which also FSM-gates.
+      if (!invoiceTransitionAllowed(invoice.lifecycleState, expectedLifecycle)) {
+        runtime.addAudit(ctx, 'INVOICE_ALLOWANCE_SKIPPED', 'INVOICE', invoice.id,
+          { lifecycleState: invoice.lifecycleState },
+          { reason: 'FSM_DISALLOWS_ALLOWANCE', target: expectedLifecycle, amount });
+      } else {
+        const allowanceId = store.nextId('allowance');
+        let allowanceResult = null;
+        try {
+          allowanceResult = await invProvider.allowance({ invoiceId: invoice.id, amount, reasonCode: body.reasonCode, alreadyUploaded });
+        } catch (err) {
+          // Provider allowance failure must not silently vanish — audit it and
+          // leave the invoice untouched for the manual-repair path.
+          runtime.addAudit(ctx, 'INVOICE_ALLOWANCE_FAILED', 'INVOICE', invoice.id, null, { amount, reasonCode: body.reasonCode, reason: err.message });
+        }
+        const allowanceLifecycle = allowanceResult ? allowanceResult.lifecycleState : expectedLifecycle;
+        store.data.invoiceAllowances.set(allowanceId, { id: allowanceId, tenantId: ctx.tenantId, invoiceId: invoice.id, orderId: order.id, amount, state: allowanceResult ? 'ALLOWANCE_APPLIED' : 'ALLOWANCE_CREATED_SANDBOX', providerAllowanceId: allowanceResult ? allowanceResult.allowanceId : null, lifecycleState: allowanceLifecycle, reasonCode: body.reasonCode, createdAt: at, createdBy: ctx.userId });
+        if (allowanceResult && invoiceTransitionAllowed(invoice.lifecycleState, allowanceLifecycle)) {
+          store.data.invoices.set(invoice.id, { ...invoice, lifecycleState: allowanceLifecycle, updatedAt: at });
+          runtime.addAudit(ctx, 'INVOICE_ALLOWANCE_APPLIED', 'INVOICE', invoice.id, { lifecycleState: invoice.lifecycleState }, { lifecycleState: allowanceLifecycle, amount, providerAllowanceId: allowanceResult.allowanceId });
+        }
+      }
     }
     runtime.addAudit(ctx, 'ORDER_REFUNDED', 'order', order.id,
       { id: order.id, state: order.state, paymentState: order.paymentState, refundTotal: order.refundTotal || 0 },
       { id: next.id, state: next.state, paymentState: next.paymentState, refundTotal: next.refundTotal });
     try { metrics.refundsTotal.inc({ reason: body.reasonCode }); metrics.ordersStateTotal.inc({ state: next.state }); } catch { /* metric optional */ }
     const response = { refund, order: orderResponse(runtime, next) };
-    if (idempotencyKey) {
-      const idemKey = `${ctx.tenantId}:${order.storeId}:refund:${idempotencyKey}`;
-      store.data.idempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), response });
-    }
+    store.data.idempotency.set(refundIdemKey, { fingerprint: runtime.requestFingerprint(body), response });
     runtime.json(res, 200, response);
   });
 
@@ -423,6 +510,17 @@ function register(router, runtime) {
     if (!['CUST_CANCEL', 'INPUT_ERROR', 'VOID_AFTER_PRINT'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('VOID_NOT_ALLOWED', 'invalid reasonCode for void')); return; }
     const next = { ...order, state: 'VOIDED', voidReasonCode: body.reasonCode, voidNote: body.note || null, updatedAt: runtime.nowIso() };
     store.data.orders.set(order.id, next);
+    // Cancel any not-yet-captured (QR PENDING_CUSTOMER_SCAN) payment so a late
+    // settlement confirm cannot capture money against a voided order. Audited so
+    // support has a reconciliation trail if a webhook still arrives.
+    for (const p of paymentsFor(runtime, order.id)) {
+      if (p.status === 'PENDING') {
+        store.data.payments.set(p.id, { ...p, status: 'CANCELLED', settlementState: 'CANCELLED', cancelledAt: runtime.nowIso() });
+        runtime.addAudit(ctx, 'PAYMENT_CANCELLED', 'payment', p.id,
+          { status: p.status, settlementState: p.settlementState },
+          { status: 'CANCELLED', reason: 'ORDER_VOIDED', orderId: order.id });
+      }
+    }
     runtime.addAudit(ctx, 'ORDER_VOIDED', 'order', order.id,
       { id: order.id, state: order.state, paymentState: order.paymentState },
       { id: next.id, state: next.state, voidReasonCode: next.voidReasonCode, voidNote: next.voidNote });
