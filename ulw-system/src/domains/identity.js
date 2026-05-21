@@ -7,6 +7,8 @@ const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 d
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;            // 12 h
 const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;            // 5 min
 const MFA_LOCKOUT_MAX_FAILURES = 5;
+const MFA_LOCKOUT_WINDOW_MS = 5 * 60 * 1000;    // 5 min — stale failures expire
+const MFA_LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 min — lockout auto-clears
 
 // In-memory MFA challenge store — short-lived (5 min). Reboot wipes them,
 // forcing re-login, which is correct behavior.
@@ -19,12 +21,32 @@ function mfaUserKey(tenantId, userId) {
 function checkMfaLockout(key) {
   const entry = mfaAttempts.get(key);
   if (!entry) return false;
-  if (entry.attempts >= MFA_LOCKOUT_MAX_FAILURES) return true;
+  const now = Date.now();
+  // Window expiry: failures older than the window no longer count, so a user
+  // is not locked out forever (the old code never reset and stayed locked
+  // until process restart). Mirrors checkLockout for login.
+  if (now - (entry.lastFailedAt || 0) > MFA_LOCKOUT_WINDOW_MS) {
+    mfaAttempts.delete(key);
+    return false;
+  }
+  if (entry.attempts >= MFA_LOCKOUT_MAX_FAILURES) {
+    // Lockout auto-clears once the lockout duration elapses.
+    if (now - entry.lastFailedAt > MFA_LOCKOUT_DURATION_MS) {
+      mfaAttempts.delete(key);
+      return false;
+    }
+    return true;
+  }
   return false;
 }
 function recordMfaFailure(key) {
-  const entry = mfaAttempts.get(key) || { attempts: 0 };
-  mfaAttempts.set(key, { attempts: entry.attempts + 1, lastFailedAt: Date.now() });
+  const now = Date.now();
+  const entry = mfaAttempts.get(key);
+  if (!entry || now - (entry.lastFailedAt || 0) > MFA_LOCKOUT_WINDOW_MS) {
+    mfaAttempts.set(key, { attempts: 1, lastFailedAt: now });
+  } else {
+    mfaAttempts.set(key, { attempts: entry.attempts + 1, lastFailedAt: now });
+  }
 }
 function clearMfaFailures(key) {
   mfaAttempts.delete(key);
@@ -310,7 +332,7 @@ function register(router, runtime) {
         }
       }
       runtime.addAudit(
-        { tenantId: record.tenantId, userId: record.userId, role: 'GUEST', ip: req.socket.remoteAddress || '0.0.0.0', deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
+        { tenantId: record.tenantId, userId: record.userId, role: 'GUEST', ip: clientIp(req), deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
         'AUTH_REFRESH_REUSE_DETECTED', 'refresh_token', record.family,
         { used: true }, { revoked, family }
       );
@@ -368,7 +390,7 @@ function register(router, runtime) {
       expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
     });
     runtime.addAudit(
-      { tenantId: record.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
+      { tenantId: record.tenantId, userId: user.id, role: user.role, ip: clientIp(req), deviceId: record.deviceId, userAgent: req.headers['user-agent'] || '' },
       'AUTH_REFRESH_SUCCESS', 'session', newTokenHash,
       { sessionHash: record.sessionHash }, { sessionHash: newTokenHash }
     );
@@ -467,7 +489,7 @@ function register(router, runtime) {
     if (!mfa.verifyTotp(code, decryptSecret(user.mfaSecret))) {
       recordMfaFailure(lockoutKey);
       runtime.addAudit(
-        { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
+        { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: clientIp(req), deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
         'AUTH_MFA_CHALLENGE_FAILED', 'user', user.id, null, { reason: 'invalid_code' }
       );
       runtime.json(res, 401, runtime.error('MFA_INVALID', 'code did not match'));
@@ -508,7 +530,7 @@ function register(router, runtime) {
       expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
     });
     runtime.addAudit(
-      { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: req.socket.remoteAddress || '0.0.0.0', deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
+      { tenantId: challenge.tenantId, userId: user.id, role: user.role, ip: clientIp(req), deviceId: challenge.deviceId, userAgent: challenge.userAgent || '' },
       'AUTH_LOGIN_MFA_SUCCESS', 'user', user.id, null, { storeId: challenge.storeId }
     );
     const payload = runtime.sessionResponse(session, token);

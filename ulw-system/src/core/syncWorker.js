@@ -12,11 +12,20 @@ const OUTBOX_INTERVAL_MS = 10_000;   // 10 s
 const TELEMETRY_INTERVAL_MS = 30_000; // 30 s
 const DRAFT_EXPIRY_INTERVAL_MS = 60_000; // 60 s
 const INVOICE_UPLOAD_INTERVAL_MS = 20_000; // 20 s
+const PRINT_JOB_INTERVAL_MS = 30_000; // 30 s
 const DRAFT_AGE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 h
 const TELEMETRY_UNREACHABLE_MS = 5 * 60 * 1000; // 5 min
 const TELEMETRY_RECOVERED_MS = 2 * 60 * 1000;   // 2 min
 const MAX_ATTEMPTS = 6;
 const INVOICE_MAX_ATTEMPTS = 6;
+const OUTBOX_BASE_BACKOFF_MS = 60_000;        // 1 min
+const OUTBOX_MAX_BACKOFF_MS = 30 * 60_000;    // cap 30 min
+
+// Exponential backoff for outbox retries, capped at 30 min. Mirrors the
+// invoice-upload + print-job retry cadence so all three workers behave the same.
+function outboxBackoffMs(attempts) {
+  return Math.min(OUTBOX_BASE_BACKOFF_MS * Math.pow(2, Math.max(0, attempts - 1)), OUTBOX_MAX_BACKOFF_MS);
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -57,8 +66,26 @@ function pushAudit(store, tenantId, action, resourceType, resourceId, before, af
 function tickOutbox(store) {
   let changed = false;
 
+  const now = Date.now();
+
   for (const [key, job] of store.data.outboxJobs.entries()) {
     const { state } = job;
+
+    if (state === 'RETRYABLE_ERROR') {
+      // Backoff gate: a failed job waits for nextRetryAt before re-entering
+      // flight. Without this the job looped IN_FLIGHT→RETRYABLE_ERROR every
+      // tick with no spacing, and (worse) was never re-tried because no branch
+      // moved RETRYABLE_ERROR back to IN_FLIGHT.
+      if (job.nextRetryAt && new Date(job.nextRetryAt).getTime() > now) continue;
+      const next = { ...job, state: 'IN_FLIGHT', lastTriedAt: nowIso() };
+      store.data.outboxJobs.set(key, next);
+      pushAudit(store, job.tenantId, 'OUTBOX_ADVANCE', 'OUTBOX_JOB', key,
+        { state: job.state, attempts: job.attempts || 0 },
+        { state: next.state, attempts: next.attempts || 0 });
+      metrics.outboxJobsTotal.inc({ state: 'IN_FLIGHT' });
+      changed = true;
+      continue;
+    }
 
     if (state === 'PENDING') {
       // Advance to IN_FLIGHT
@@ -97,7 +124,13 @@ function tickOutbox(store) {
         : false;
 
       const nextState = autoComplete ? 'DONE' : 'RETRYABLE_ERROR';
-      const next = { ...job, state: nextState, attempts, lastTriedAt: nowIso() };
+      const next = {
+        ...job,
+        state: nextState,
+        attempts,
+        lastTriedAt: nowIso(),
+        nextRetryAt: nextState === 'RETRYABLE_ERROR' ? new Date(now + outboxBackoffMs(attempts)).toISOString() : null,
+      };
       store.data.outboxJobs.set(key, next);
       pushAudit(store, job.tenantId, `OUTBOX_${nextState}`, 'OUTBOX_JOB', key,
         { state: job.state, attempts: job.attempts || 0 },
@@ -277,6 +310,37 @@ async function tickInvoiceUpload(store) {
 }
 
 // ---------------------------------------------------------------------------
+// Print-job retry tick
+// ---------------------------------------------------------------------------
+function tickPrintJobs(store) {
+  let changed = false;
+  const now = Date.now();
+  for (const [key, job] of store.data.printJobs.entries()) {
+    if (job.state !== 'RETRYING') continue;
+    if (job.nextRetryAt && new Date(job.nextRetryAt).getTime() > now) continue;
+    const attempts = job.attempts || 0;
+    if (attempts >= MAX_ATTEMPTS) {
+      const next = { ...job, state: 'DEAD_LETTER', updatedAt: nowIso() };
+      store.data.printJobs.set(key, next);
+      pushAudit(store, job.tenantId, 'PRINT_JOB_RETRY', 'PRINT_JOB', job.id,
+        { attempts, state: job.state },
+        { attempts, state: 'DEAD_LETTER' });
+      changed = true;
+      continue;
+    }
+    const newAttempts = attempts + 1;
+    const nextRetryAt = new Date(now + Math.min(60_000 * Math.pow(2, attempts), 30 * 60_000)).toISOString();
+    const next = { ...job, state: 'RETRYING', attempts: newAttempts, nextRetryAt, lastTriedAt: nowIso(), updatedAt: nowIso() };
+    store.data.printJobs.set(key, next);
+    pushAudit(store, job.tenantId, 'PRINT_JOB_RETRY', 'PRINT_JOB', job.id,
+      { attempts, state: job.state },
+      { attempts: newAttempts, state: 'RETRYING' });
+    changed = true;
+  }
+  return changed;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 function start(runtime, options = {}) {
@@ -326,6 +390,7 @@ function start(runtime, options = {}) {
   }, draftInterval);
 
   const invoiceInterval = options.invoiceInterval || INVOICE_UPLOAD_INTERVAL_MS;
+  const printJobInterval = options.printJobInterval || PRINT_JOB_INTERVAL_MS;
   const invoiceTimer = setInterval(async () => {
     try {
       const changed = await tickInvoiceUpload(store);
@@ -336,15 +401,26 @@ function start(runtime, options = {}) {
     }
   }, invoiceInterval);
 
+  const printJobTimer = setInterval(() => {
+    try {
+      const changed = tickPrintJobs(store);
+      if (changed) store.persist();
+      logger.debug({ changed }, 'syncWorker print job retry tick');
+    } catch (err) {
+      logger.error({ err: err.message }, 'syncWorker print job retry tick error');
+    }
+  }, printJobInterval);
+
   function stop() {
     clearInterval(outboxTimer);
     clearInterval(telemetryTimer);
     clearInterval(draftTimer);
     clearInterval(invoiceTimer);
+    clearInterval(printJobTimer);
     logger.info('syncWorker stopped');
   }
 
   return { stop };
 }
 
-module.exports = { start, tickOutbox, tickTelemetry, tickDraftExpiry, tickInvoiceUpload };
+module.exports = { start, tickOutbox, tickTelemetry, tickDraftExpiry, tickInvoiceUpload, tickPrintJobs };

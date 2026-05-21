@@ -5,8 +5,8 @@
 // restart because rows live in the same store.db.
 
 const BUCKETS = {
-  login:    { capacity: 10,  refillPerSec: 10 / 60 },   // 10 / minute
-  api:      { capacity: 120, refillPerSec: 120 / 60 },  // 120 / minute per IP
+  login:    { capacity: 10,  refillPerSec: 10 / 60 },   // 10 / minute per IP (pre-auth)
+  api:      { capacity: 120, refillPerSec: 120 / 60 },  // 120 / minute per tenant
 };
 
 let preparedTake = null;
@@ -38,7 +38,7 @@ function pickRule(req) {
   return null;
 }
 
-function identityFor(req) {
+function ipFor(req) {
   if (process.env.TRUST_PROXY === '1') {
     const xff = req && req.headers && req.headers['x-forwarded-for'];
     if (typeof xff === 'string' && xff.length > 0) {
@@ -47,6 +47,18 @@ function identityFor(req) {
     }
   }
   return req && req.socket && req.socket.remoteAddress || 'unknown';
+}
+
+// Returns the rate-limit identity string for a given bucket.
+// - login: always IP — request is pre-authentication, no tenant exists yet.
+// - api:   tenant_id from the resolved session context (never a client header);
+//          falls back to IP for anonymous/GUEST requests where tenantId is null.
+function identityFor(req, bucket, tenantId) {
+  if (bucket === 'login') return ipFor(req);
+  // api bucket: key by tenant so one tenant cannot exhaust the shared limit
+  // and a shared NAT IP does not throttle all tenants together.
+  if (tenantId) return `tenant:${tenantId}`;
+  return ipFor(req);
 }
 
 function consume(bucket, identity, now = Date.now()) {
@@ -72,10 +84,10 @@ function consume(bucket, identity, now = Date.now()) {
   return tx();
 }
 
-function middleware(req, res) {
+function middleware(req, res, tenantId) {
   const bucket = pickRule(req);
   if (!bucket) return true;
-  const id = identityFor(req);
+  const id = identityFor(req, bucket, tenantId || null);
   const result = consume(bucket, id);
   if (!result.allowed) {
     res.setHeader('Retry-After', String(Math.ceil(result.retryAfterMs / 1000)));

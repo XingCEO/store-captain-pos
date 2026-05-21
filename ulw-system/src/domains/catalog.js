@@ -245,6 +245,9 @@ function register(router, runtime) {
     let skippedCount = 0;
     let errorCount = 0;
     const errors = [];
+    // Per-SKU before/after so 改價 is auditable at the row level, not just by
+    // aggregate counts (docs/architecture.md §6: 改價 must leave before/after).
+    const changes = [];
 
     for (const update of updates) {
       // Tenant scope check per storeId in update
@@ -262,13 +265,17 @@ function register(router, runtime) {
         errorCount += 1;
         continue;
       }
-      store.data.productPrices.set(`${ctx.tenantId}:${update.storeId}:${sku.id}`, { tenantId: ctx.tenantId, storeId: update.storeId, skuId: sku.id, price: update.price, currency: update.currency || 'TWD', updatedAt: runtime.nowIso(), updatedBy: ctx.userId });
+      const priceKey = `${ctx.tenantId}:${update.storeId}:${sku.id}`;
+      const prior = store.data.productPrices.get(priceKey);
+      const before = prior ? prior.price : (typeof sku.price === 'number' ? sku.price : null);
+      store.data.productPrices.set(priceKey, { tenantId: ctx.tenantId, storeId: update.storeId, skuId: sku.id, price: update.price, currency: update.currency || 'TWD', updatedAt: runtime.nowIso(), updatedBy: ctx.userId });
+      changes.push({ skuId: sku.id, storeId: update.storeId, before, after: update.price });
       appliedCount += 1;
     }
 
     skippedCount = updates.length - appliedCount - errorCount;
     const batchId = `batch-${Date.now()}`;
-    runtime.addAudit(ctx, 'PRICES_BATCH_APPLIED', 'PRICE_BATCH', batchId, null, { appliedCount, skippedCount, errorCount, errors });
+    runtime.addAudit(ctx, 'PRICES_BATCH_APPLIED', 'PRICE_BATCH', batchId, null, { appliedCount, skippedCount, errorCount, changes, errors });
     const response = { batchId, applied: appliedCount, skipped: skippedCount, errors };
     if (idempotencyKey && String(idempotencyKey).trim()) {
       const idemKey = `${ctx.tenantId}:catalog:prices_batch:${idempotencyKey}`;

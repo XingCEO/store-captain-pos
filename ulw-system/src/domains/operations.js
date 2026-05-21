@@ -253,8 +253,61 @@ function register(router, runtime) {
     if (!runtime.requireTenant(res, ctx)) return;
     const storeId = url.searchParams.get('storeId');
     if (!runtime.requireStoreScope(res, ctx, storeId)) return;
-    const items = [...store.data.orders.values()].filter((order) => order.tenantId === ctx.tenantId).filter((order) => !storeId || order.storeId === storeId).map((order) => ({ orderId: order.id, source: order.source || 'POS', sourceRef: order.sourceRef || order.clientRef || null, state: order.state, paymentState: order.paymentState, productionState: order.productionState || (['CONFIRMED', 'PAID_CASH', 'PAID_PENDING'].includes(order.state) ? 'QUEUED' : 'WAITING_PAYMENT'), callNumber: order.callNumber || null, workstation: order.workstation || 'KITCHEN', lineItemCount: order.itemCount || orderItems(runtime, order.id).length || order.channelPayload?.items?.length || 0, createdAt: order.createdAt }));
-    runtime.json(res, 200, { items, nextCursor: null });
+
+    // --- pagination params ---
+    const rawLimit = url.searchParams.get('limit');
+    let limit = 50;
+    if (rawLimit !== null) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed < 1) { runtime.json(res, 400, runtime.error('INVALID_PARAM', 'limit must be a positive integer')); return; }
+      limit = Math.min(parsed, 200);
+    }
+
+    const rawCursor = url.searchParams.get('cursor');
+    let cursorCreatedAt = null;
+    let cursorId = null;
+    if (rawCursor !== null) {
+      try {
+        const decoded = Buffer.from(rawCursor, 'base64').toString('utf8');
+        const sep = decoded.lastIndexOf('|');
+        if (sep < 1) throw new Error('bad format');
+        cursorCreatedAt = decoded.slice(0, sep);
+        cursorId = decoded.slice(sep + 1);
+        if (!cursorCreatedAt || !cursorId) throw new Error('bad fields');
+      } catch {
+        runtime.json(res, 400, runtime.error('INVALID_CURSOR', 'cursor is malformed'));
+        return;
+      }
+    }
+
+    // collect + filter (tenant scope first, never skip)
+    const all = [...store.data.orders.values()]
+      .filter((order) => order.tenantId === ctx.tenantId)
+      .filter((order) => !storeId || order.storeId === storeId);
+
+    // stable sort: createdAt desc, then id desc
+    all.sort((a, b) => {
+      const tDiff = (b.createdAt || '') < (a.createdAt || '') ? -1 : (b.createdAt || '') > (a.createdAt || '') ? 1 : 0;
+      if (tDiff !== 0) return tDiff;
+      return (b.id || '') < (a.id || '') ? -1 : (b.id || '') > (a.id || '') ? 1 : 0;
+    });
+
+    // apply cursor: skip everything up to and including the cursor position
+    let startIdx = 0;
+    if (cursorCreatedAt !== null) {
+      const pos = all.findIndex((o) => o.createdAt === cursorCreatedAt && o.id === cursorId);
+      if (pos === -1) { runtime.json(res, 400, runtime.error('INVALID_CURSOR', 'cursor position not found')); return; }
+      startIdx = pos + 1;
+    }
+
+    const page = all.slice(startIdx, startIdx + limit);
+    const hasMore = startIdx + limit < all.length;
+    const nextCursor = hasMore
+      ? Buffer.from(`${page[page.length - 1].createdAt}|${page[page.length - 1].id}`).toString('base64')
+      : null;
+
+    const items = page.map((order) => ({ orderId: order.id, source: order.source || 'POS', sourceRef: order.sourceRef || order.clientRef || null, state: order.state, paymentState: order.paymentState, productionState: order.productionState || (['CONFIRMED', 'PAID_CASH', 'PAID_PENDING'].includes(order.state) ? 'QUEUED' : 'WAITING_PAYMENT'), callNumber: order.callNumber || null, workstation: order.workstation || 'KITCHEN', lineItemCount: order.itemCount || orderItems(runtime, order.id).length || order.channelPayload?.items?.length || 0, createdAt: order.createdAt }));
+    runtime.json(res, 200, { items, nextCursor });
   });
 
   router.add('GET', '/api/v1/kds/orders', async ({ res, ctx, url }) => {
@@ -292,11 +345,15 @@ function register(router, runtime) {
   // Role: SUPERVISOR+; reject if another drawer OPEN at same terminal → 409 CASHBOX_ALREADY_OPEN
   router.add('POST', '/api/v1/cash-drawers/open', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx)) return;
-    if (!runtime.requireRole(res, ctx, 'SUPERVISOR')) {
+    // Direct rank check (not requireRole) so we emit PERMISSION_DENIED with the
+    // drawer-specific message. requireRole would have already sent its own
+    // TENANT_NOT_AUTHORIZED response, double-writing and clobbering this one.
+    if ((roleRank[ctx.role] || 0) < roleRank['SUPERVISOR']) {
       runtime.json(res, 403, runtime.error('PERMISSION_DENIED', 'SUPERVISOR role required to open cash drawer'));
       return;
     }
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
     const storeId = body.storeId || ctx.storeId;
     const terminalId = body.terminalId || ctx.deviceId;
     if (!runtime.requireStoreScope(res, ctx, storeId)) return;
@@ -326,11 +383,14 @@ function register(router, runtime) {
   // Role: SUPERVISOR+; variance != 0 requires adjustments[] with reason; CASH_SHORTFALL_UNEXPLAINED otherwise
   router.add('POST', '/api/v1/cash-drawers/close', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx)) return;
-    if (!runtime.requireRole(res, ctx, 'SUPERVISOR')) {
+    // Direct rank check (not requireRole) — see open handler: avoids the
+    // double-write that clobbered this PERMISSION_DENIED with TENANT_NOT_AUTHORIZED.
+    if ((roleRank[ctx.role] || 0) < roleRank['SUPERVISOR']) {
       runtime.json(res, 403, runtime.error('PERMISSION_DENIED', 'SUPERVISOR role required to close cash drawer'));
       return;
     }
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
     const drawer = store.data.cashDrawers.get(body.cashDrawerId);
     if (!drawer || drawer.tenantId !== ctx.tenantId || drawer.state === 'CLOSED') { runtime.json(res, 404, runtime.error('DRAWER_NOT_FOUND', 'cash drawer not found or already closed')); return; }
     if (!runtime.requireStoreScope(res, ctx, drawer.storeId)) return;
@@ -372,7 +432,8 @@ function register(router, runtime) {
   router.add('POST', '/api/v1/inventory/adjustments', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
     if (!requireFeature(runtime, res, ctx, 'INVENTORY')) return;
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
     const storeId = body.storeId || ctx.storeId;
     if (storeId && !runtime.requireStoreScope(res, ctx, storeId)) return;
     const sku = store.data.skus.get(body.skuId);

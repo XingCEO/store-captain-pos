@@ -60,7 +60,8 @@ function createApp({ dataDir, publicDir, port }) {
     const requestId = req.headers['x-request-id'] || crypto.randomUUID();
     res.setHeader('x-request-id', requestId);
 
-    if (!rateLimit.middleware(req, res)) {
+    const rlCtx = runtime.requestContext(req);
+    if (!rateLimit.middleware(req, res, rlCtx.tenantId)) {
       try {
         const bucket = req.url && req.url.startsWith('/api/v1/auth/login') ? 'login' : 'api';
         metrics.rateLimitRejectsTotal.inc({ bucket });
