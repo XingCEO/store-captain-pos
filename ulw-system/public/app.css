@@ -370,7 +370,20 @@ button { cursor: pointer; }
 /* ----------------------------------------------------------------
    App frame
 ----------------------------------------------------------------*/
-.app-frame { position: relative; z-index: 1; display: grid; grid-template-rows: auto 1fr; height: 100vh; min-height: 0; overflow: hidden; }
+/* 100dvh (dynamic viewport) so mobile browser chrome / on-screen keyboard does
+   not clip the workspace; 100vh kept as fallback for older engines. */
+.app-frame { position: relative; z-index: 1; display: grid; grid-template-rows: auto 1fr; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+
+/* Global busy indicator — driven by body[data-busy] in run(). A thin top bar
+   gives visible feedback for in-flight ops (the bottom status pill is below the
+   fold on tablet layouts) without blocking the nav rail. */
+body[data-busy="1"]::after {
+  content: ""; position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 9999;
+  background: linear-gradient(90deg, var(--jade), var(--amber), var(--jade));
+  background-size: 200% 100%; animation: busybar 1s linear infinite;
+}
+@keyframes busybar { from { background-position: 200% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { body[data-busy="1"]::after { animation: none; } }
 
 .worktop {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;

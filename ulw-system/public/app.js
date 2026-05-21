@@ -955,7 +955,7 @@ async function applyDiscount() {
 
 async function redeemCoupon() {
   if (!state.activeOrderId) { show('orderResult', '尚未建立訂單'); return; }
-  const result = await api('/api/v1/coupons/redeem', { method: 'POST', body: JSON.stringify({ orderId: state.activeOrderId, code: 'WELCOME50' }) });
+  const result = await api('/api/v1/coupons/redeem', { method: 'POST', body: JSON.stringify({ orderId: state.activeOrderId, code: 'WELCOME50', idempotencyKey: `coupon-${state.activeOrderId}-${Date.now()}` }) });
   state.activeOrderTotal = result.order.grandTotal;
   show('orderResult', result);
   updateMetrics();
@@ -995,12 +995,17 @@ async function refundOrder() {
   if (!orderId) { show('orderResult', '尚未有可退款已付款訂單'); return; }
   const order = await api(`/api/v1/orders/${orderId}`);
   const amount = Math.min(10, order.grandTotal || 0);
-  show('orderResult', await api(`/api/v1/orders/${orderId}/refund`, { method: 'POST', body: JSON.stringify({ amount, reasonCode: 'CUSTOMER_RETURN', method: 'CASH', restock: true }) }));
+  // Destructive + money-moving: require explicit confirmation. The refund
+  // leaves an audit row and triggers a gateway reversal for non-cash methods.
+  if (!window.confirm(`確定退款 NT$${amount}?此動作會留下稽核記錄,非現金將觸發金流退款。`)) return;
+  show('orderResult', await api(`/api/v1/orders/${orderId}/refund`, { method: 'POST', body: JSON.stringify({ amount, reasonCode: 'CUSTOMER_RETURN', method: 'CASH', restock: true, idempotencyKey: `refund-${orderId}-${Date.now()}` }) }));
   await loadInventory().catch(() => null);
 }
 
 async function voidOrder() {
   if (!state.activeOrderId) { show('orderResult', '尚未建立訂單'); return; }
+  // Destructive: voiding clears the active order and leaves an audit row.
+  if (!window.confirm('確定作廢這筆訂單?作廢後無法復原,並會留下稽核記錄。')) return;
   const result = await api(`/api/v1/orders/${state.activeOrderId}/void`, { method: 'POST', body: JSON.stringify({ reasonCode: 'INPUT_ERROR', actorPin: '1234', note: '前台輸入錯誤' }) });
   state.activeOrderId = null;
   state.activeOrderTotal = 0;
@@ -1072,6 +1077,7 @@ async function confirmChannelOrder() {
   }
   if (!state.activeChannelOrderId) { show('orderResult', '目前沒有可確認的來源單'); return; }
   const result = await api(`/api/v1/channels/orders/${state.activeChannelOrderId}/status`, { method: 'PATCH', body: JSON.stringify({ state: 'CONFIRMED', actor: state.session.userId, reason: '人工確認接單' }) });
+  if (isQueued(result)) { show('orderResult', '已離線：確認接單已排入補傳佇列。'); PosExtras?.toast('離線 — 確認接單已排入', 'warn'); return; }
   show('orderResult', result);
   state.activeChannelOrderId = null;
   await Promise.all([loadHub(), loadInventory().catch(() => null)]);
@@ -1287,7 +1293,7 @@ async function loadCoupons() { show('memberResult', await api('/api/v1/coupons')
 async function adjustPoints() {
   if (!state.activeCustomerId) await searchMember();
   if (!state.activeCustomerId) { show('memberResult', '尚未有會員'); return; }
-  show('memberResult', await api('/api/v1/customers/points/adjust', { method: 'POST', body: JSON.stringify({ customerId: state.activeCustomerId, points: 10, reasonCode: 'ADJUST' }) }));
+  show('memberResult', await api('/api/v1/customers/points/adjust', { method: 'POST', body: JSON.stringify({ customerId: state.activeCustomerId, points: 10, reasonCode: 'ADJUST', idempotencyKey: `points-${state.activeCustomerId}-${Date.now()}` }) }));
 }
 
 async function loadCategories() { show('catalogResult', await api('/api/v1/catalog/categories')); }
@@ -1502,8 +1508,11 @@ async function run(fn, outputId) {
   // running. Without it, a double-click on 送出訂單 / 結帳 fires two requests
   // with distinct idempotency keys, so the server cannot dedupe them and
   // creates a duplicate order or payment.
-  if (_runInFlight) { window.PosExtras?.toast('處理中，請稍候…', 'warn'); return; }
+  if (_runInFlight) { window.PosExtras?.toast('處理中,請稍候…', 'warn'); return; }
   _runInFlight = true;
+  // Visible global busy state — the bottom status pill is below the fold on
+  // tablet layouts, so drive a top progress bar + dim action buttons via CSS.
+  document.body.dataset.busy = '1';
   try {
     setStatus('處理中', 'busy');
     await fn();
@@ -1514,6 +1523,7 @@ async function run(fn, outputId) {
     setStatus(message, 'error');
   } finally {
     _runInFlight = false;
+    delete document.body.dataset.busy;
   }
 }
 

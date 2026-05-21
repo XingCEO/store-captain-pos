@@ -7,7 +7,11 @@
     raw.replace(/^[?#]/, '').split('&').forEach(function (pair) {
       var idx = pair.indexOf('=');
       if (idx < 0) return;
-      out[decodeURIComponent(pair.slice(0, idx))] = decodeURIComponent(pair.slice(idx + 1));
+      // A corrupted QR scan can yield malformed %-sequences; decodeURIComponent
+      // throws URIError on those. Skip the bad pair instead of crashing init().
+      try {
+        out[decodeURIComponent(pair.slice(0, idx))] = decodeURIComponent(pair.slice(idx + 1));
+      } catch (e) { /* skip malformed pair */ }
     });
     return out;
   }

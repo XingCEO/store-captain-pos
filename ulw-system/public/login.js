@@ -26,6 +26,10 @@
     if (!el) {
       el = document.createElement('div');
       el.id = 'flashToast';
+      // Announce login errors/notices to screen readers.
+      el.setAttribute('role', 'alert');
+      el.setAttribute('aria-live', 'assertive');
+      el.setAttribute('aria-atomic', 'true');
       document.body.appendChild(el);
     }
     el.classList.remove('is-warn', 'is-err', 'is-ok');
