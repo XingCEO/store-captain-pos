@@ -121,7 +121,9 @@
 - **補救流程**：
   1. 通常無需補救；若顧客回頭要結帳，MANAGER 需重新建單（呼叫 `POST /api/v1/orders` 新建 order）。
   2. 如該訂單有特殊記錄價值（例如大額預訂、重要客人），MANAGER 可調整 `storeSettings.draftAgeThresholdMs` 延長過期門檻（例如改成 48h），但需 ADMIN 後台變更，並留 audit ticket。
-  3. 若要復活已過期的 DRAFT，系統無 API 支援；需 ADMIN 手動修改 data/store.json 將 order state 改回 DRAFT，然後重啟伺服器。
+  3. 若要復活已過期的 DRAFT，系統無 API 支援。ADMIN 有兩條路徑可選：
+     - **路徑 A（單筆復原）**：以 SQLite CLI 或 DB 工具開啟 `data/store.db`，在 `entities` 表找到 `collection='orders'`、`id=<orderId>`、`tenant_id=<tenantId>` 的該列，將 `data_json` 中的 `"state":"AUTO_EXPIRED"` 改為 `"state":"DRAFT"` 並更新 `"updatedAt"` 為當前 ISO 時間戳，儲存後重啟伺服器。操作人、時間、原因須留 audit ticket 號。
+     - **路徑 B（完整重置，僅開發/測試或空租戶）**：刪除 `data/store.db` 及 `data/store.db-wal`（若存在），重啟後 `ensureTenantDefaults()` 自動重新播種；所有歷史訂單與稽核紀錄將清空，正式環境禁用。
 - **責任人**：MANAGER（引導顧客重新建單）+ ADMIN（調整閾值或資料復原）。
 - **SLA**：客訴後 2h 內重新建單；延期調整不超過 7 天。
 - **驗證**：審核 auditLogs 的 DRAFT_AUTO_EXPIRED 紀錄；若有復活操作，audit log 應含 manual_override ticket。
@@ -147,11 +149,11 @@
 - **偵測**：`POST /api/v1/inventory/adjustments` 或 `POST /api/v1/inventory/counts` 回傳 INVENTORY_LEDGER_WRITE_FAILED (500 error)；ledger append 拋 exception。
 - **影響**：庫存調整完全失敗；ledger 可能部分寫入，導致 projection (inventoryLevels) 與 ledger 源 out of sync。
 - **補救步驟**：
-  1. 立即聯絡工程團隊檢查伺服器日誌、磁盤空間、data/store.json 權限問題。
+  1. 立即聯絡工程團隊檢查伺服器日誌、磁盤空間、`data/store.db` 檔案權限問題。
   2. 重新嘗試相同調整：若伺服器已恢復，重試 `POST /api/v1/inventory/adjustments` 或 `POST /api/v1/inventory/counts`。
   3. 若問題仍在，暫停所有庫存操作；SUPERVISOR 需人工決策：
      - Option A（推薦）：等伺服器修復，呼叫 `POST /api/v1/inventory/rebuild?dryRun=false` 強制 ledger → projection 同步。
-     - Option B：ADMIN 手動編輯 data/store.json 補上遺漏的 ledger row，然後運行 rebuild。
+     - Option B：ADMIN 以 SQLite CLI 或 DB 工具開啟 `data/store.db`，在 `entities` 表（`collection='inventoryLedger'`、`tenant_id=<tenantId>`）手動插入遺漏的 ledger row（`data_json` 須含完整欄位：`id`、`tenantId`、`storeId`、`skuId`、`delta`、`reason`、`movedAt`），儲存並重啟伺服器，再運行 rebuild。
   4. 完成後驗證 inventoryLevels 與 ledger 一致。
 - **責任人**：ADMIN（工程）+ SUPERVISOR（人工調整）。
 - **SLA**：< 30 分鐘內恢復可寫入狀態；若 > 2 小時仍故障，降級到現金制、停止在線銷售。
