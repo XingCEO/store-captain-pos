@@ -47,7 +47,7 @@ function reconcileForStores(runtime, ctx, storeIds, date) {
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
     const invoiceSum = [...runtime.store.data.invoices.values()]
-      .filter((inv) => inv.orderId === order.id && inv.lifecycleState !== 'VOIDED' && inv.lifecycleState !== 'VOIDED_SANDBOX')
+      .filter((inv) => inv.tenantId === ctx.tenantId && inv.orderId === order.id && inv.lifecycleState !== 'VOIDED' && inv.lifecycleState !== 'VOIDED_SANDBOX')
       .reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
 
     orderTotal += orderSubtotal;
@@ -153,8 +153,11 @@ function register(router, runtime) {
       runtime.json(res, 200, { ...next, environment: env, non_production: nonProd, mode: nonProd ? 'SANDBOX_UNTIL_GO_GATE' : 'PRODUCTION' });
     } catch (err) {
       const retryable = err.retryable !== false;
-      const nextState = retryable ? 'UPLOAD_FAILED' : 'UPLOAD_FAILED';
-      const next = { ...invoice, uploadState: 'UPLOAD_FAILED', lifecycleState: nextState, attempts, lastErrorCode: err.errorCode || 'INVOICE_UPLOAD_FAILED', updatedAt: runtime.nowIso() };
+      // Non-retryable (e.g. signature invalid) is terminal — mark uploadState
+      // DEAD_LETTER so it is not picked up for further retries and routes to the
+      // manual-repair path. lifecycleState stays UPLOAD_FAILED (the only valid
+      // failed state in the FSM). Retryable failures stay UPLOAD_FAILED.
+      const next = { ...invoice, uploadState: retryable ? 'UPLOAD_FAILED' : 'DEAD_LETTER', lifecycleState: 'UPLOAD_FAILED', attempts, lastErrorCode: err.errorCode || 'INVOICE_UPLOAD_FAILED', updatedAt: runtime.nowIso() };
       store.data.invoices.set(invoice.id, next);
       runtime.addAudit(ctx, 'INVOICE_UPLOAD_FAILED', 'INVOICE', invoice.id,
         { uploadState: invoice.uploadState, lifecycleState: invoice.lifecycleState, attempts: invoice.attempts || 0 },
@@ -168,7 +171,10 @@ function register(router, runtime) {
     const invoice = store.data.invoices.get(params[0]);
     if (!invoice || invoice.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('INVOICE_NOT_FOUND', 'invoice not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, invoice.storeId)) return;
-    const next = { ...invoice, uploadState: 'UPLOADED', lifecycleState: 'ISSUED_UPLOADED_SANDBOX', lastErrorCode: null, updatedAt: runtime.nowIso() };
+    // lifecycleState must be a state the FSM knows (INVOICE_TRANSITIONS), else
+    // a later void/allowance transition fails with INVOICE_FSM_VIOLATION.
+    // 'ISSUED_UPLOADED_SANDBOX' was not in the FSM — use the valid 'UPLOADED'.
+    const next = { ...invoice, uploadState: 'UPLOADED', lifecycleState: 'UPLOADED', lastErrorCode: null, updatedAt: runtime.nowIso() };
     store.data.invoices.set(invoice.id, next);
     runtime.addAudit(ctx, 'invoices.mark_uploaded_sandbox', 'INVOICE', invoice.id, invoice, next);
     res.setHeader('x-environment', 'sandbox');
@@ -183,10 +189,26 @@ function register(router, runtime) {
     if (!runtime.requireStoreScope(res, ctx, invoice.storeId)) return;
     const body = await runtime.parseBody(req);
     if (!['ORDER_VOID', 'INPUT_ERROR', 'CUSTOMER_RETURN'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('INVOICE_VOID_INVALID', 'reasonCode invalid')); return; }
+    // 作廢 must round-trip the invoice provider, not just flip a local flag.
+    const provider = invoiceProvider.active();
+    const alreadyUploaded = invoice.lifecycleState === 'UPLOADED' || invoice.lifecycleState === 'ALLOWANCE';
+    let voidResult;
+    try {
+      voidResult = await provider.void({ invoiceId: invoice.id, reasonCode: body.reasonCode, alreadyUploaded });
+    } catch (err) {
+      runtime.addAudit(ctx, 'INVOICE_VOID_FAILED', 'INVOICE', invoice.id, null, { reasonCode: body.reasonCode, reason: err.message });
+      runtime.json(res, 502, runtime.error(err.errorCode || 'INVOICE_VOID_FAILED', err.message || 'invoice void failed at provider'));
+      return;
+    }
+    const voidLifecycle = voidResult.lifecycleState;
+    if (!invoiceTransitionAllowed(invoice.lifecycleState, voidLifecycle)) {
+      runtime.json(res, 409, runtime.error('INVOICE_FSM_VIOLATION', `void lifecycle ${voidLifecycle} not allowed from ${invoice.lifecycleState}`));
+      return;
+    }
     const id = store.nextId('invoiceVoid');
-    const record = { id, tenantId: ctx.tenantId, invoiceId: invoice.id, orderId: invoice.orderId, state: 'VOID_CREATED_SANDBOX', reasonCode: body.reasonCode, createdBy: ctx.userId, createdAt: runtime.nowIso() };
+    const record = { id, tenantId: ctx.tenantId, invoiceId: invoice.id, orderId: invoice.orderId, state: 'VOID_APPLIED_SANDBOX', providerVoidId: voidResult.voidId || null, reasonCode: body.reasonCode, createdBy: ctx.userId, createdAt: runtime.nowIso() };
     store.data.invoiceVoids.set(id, record);
-    const next = { ...invoice, lifecycleState: 'VOIDED_SANDBOX', uploadState: 'VOID_PENDING_UPLOAD', updatedAt: runtime.nowIso() };
+    const next = { ...invoice, lifecycleState: voidLifecycle, uploadState: 'VOID_PENDING_UPLOAD', updatedAt: runtime.nowIso() };
     store.data.invoices.set(invoice.id, next);
     runtime.addAudit(ctx, 'invoices.void_sandbox', 'INVOICE', invoice.id, invoice, next);
     res.setHeader('x-environment', 'sandbox');
@@ -438,21 +460,43 @@ function register(router, runtime) {
       order.createdAt >= record.from &&
       order.createdAt <= record.to
     );
-    const body = JSON.stringify(rowsArray);
-    res.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${params[0]}.json"`,
-      'x-content-checksum': record.checksum,
-      'Content-Length': Buffer.byteLength(body),
-    });
-    res.end(body);
+    if (record.format === 'CSV') {
+      const csvEscape = (v) => {
+        const s = v == null ? '' : String(v);
+        return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const headers = ['orderId', 'orderNumber', 'storeId', 'paymentState', 'grandTotal', 'paidAt', 'createdAt'];
+      const csvRows = [headers.join(',')];
+      for (const order of rowsArray) {
+        csvRows.push([order.id, order.orderNumber, order.storeId, order.paymentState, order.grandTotal, order.paidAt || '', order.createdAt].map(csvEscape).join(','));
+      }
+      const bom = '﻿';
+      const csvBody = bom + csvRows.join('\r\n');
+      const csvBuf = Buffer.from(csvBody, 'utf8');
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${params[0]}.csv"`,
+        'x-content-checksum': record.checksum,
+        'Content-Length': csvBuf.length,
+      });
+      res.end(csvBuf);
+    } else {
+      const body = JSON.stringify(rowsArray);
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${params[0]}.json"`,
+        'x-content-checksum': record.checksum,
+        'Content-Length': Buffer.byteLength(body),
+      });
+      res.end(body);
+    }
     runtime.addAudit(ctx, 'EXPORT_DOWNLOADED', 'REPORT_EXPORT', params[0], null, { actor: ctx.userId, tenantId: ctx.tenantId, storeIds: record.storeIds, row_count: record.rows });
   });
 
   const VALID_PRINT_JOB_STATES = new Set(['FAILED', 'RETRYING', 'DEAD_LETTER', 'QUEUED', 'SENT', 'ACKED']);
 
   router.add('GET', '/api/v1/print-jobs', async ({ res, ctx, url }) => {
-    if (!runtime.requireTenant(res, ctx)) return;
+    if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
     const storeId = url.searchParams.get('storeId');
     const state = url.searchParams.get('state');
     if (state && !VALID_PRINT_JOB_STATES.has(state)) { runtime.json(res, 400, runtime.error('PRINT_JOB_STATE_INVALID', 'state must be one of FAILED|RETRYING|DEAD_LETTER|QUEUED|SENT|ACKED')); return; }
@@ -515,6 +559,14 @@ function register(router, runtime) {
     };
     store.data.printJobs.set(job.id, next);
     runtime.addAudit(ctx, 'PRINT_JOB_RETRY', 'PRINT_JOB', job.id, { attempts, state: job.state }, { attempts: newAttempts, state: 'RETRYING' });
+    // 補印發票 needs its own distinct audit action (docs/architecture.md §6),
+    // not buried inside the generic PRINT_JOB_RETRY used for NETWORK_RECOVERY /
+    // PRINT_TEMPLATE_UPDATE.
+    if (body.reason === 'MANUAL_REPRINT') {
+      runtime.addAudit(ctx, 'REPRINT_REQUESTED', 'PRINT_JOB', job.id,
+        { documentType: job.documentType || null, attempts },
+        { documentType: job.documentType || null, reason: body.reason, requestedBy, attempts: newAttempts });
+    }
     runtime.json(res, 200, { printJobId: job.id, state: next.state, retryCount: next.attempts, nextRetryAt });
   });
 
@@ -529,7 +581,10 @@ function register(router, runtime) {
     const id = store.nextId('customer');
     const customer = { id, tenantId: ctx.tenantId, phone, name: String(body.name || '未命名會員'), lineBound: Boolean(body.lineBound), points: 0, tags: Array.isArray(body.tags) ? body.tags.map(String) : [], status: 'ACTIVE', createdAt: runtime.nowIso(), updatedAt: runtime.nowIso() };
     store.data.customers.set(id, customer);
-    runtime.addAudit(ctx, 'customers.create', 'CUSTOMER', id, null, { phone, lineBound: customer.lineBound });
+    // Audit rows must not become a PII store — mask the phone (keep last 3),
+    // drop name/tags. The customer id is the traceable key.
+    const maskedPhone = phone.replace(/\d(?=\d{3})/g, '*');
+    runtime.addAudit(ctx, 'customers.create', 'CUSTOMER', id, null, { phone: maskedPhone, lineBound: customer.lineBound });
     runtime.json(res, 200, customer);
   });
 
@@ -567,11 +622,22 @@ function register(router, runtime) {
   router.add('POST', '/api/v1/coupons/redeem', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'CASHIER')) return;
     if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
+    // Redemption applies a discount + increments usedCount — a replay (double-tap
+    // or SW outbox drain) must not redeem twice. idempotencyKey is required.
+    const idempotencyKey = String(body.idempotencyKey || '').trim();
+    if (!idempotencyKey) { runtime.json(res, 400, runtime.error('IDEMPOTENCY_KEY_MISMATCH', 'idempotencyKey required')); return; }
     const coupon = [...store.data.coupons.values()].find((item) => item.tenantId === ctx.tenantId && item.code === body.code && item.status === 'ACTIVE');
     const order = store.data.orders.get(body.orderId);
     if (!coupon || !order || order.tenantId !== ctx.tenantId || order.paymentState === 'PAID') { runtime.json(res, 400, runtime.error('COUPON_NOT_APPLICABLE', 'coupon or order invalid')); return; }
     if (!runtime.requireStoreScope(res, ctx, order.storeId)) return;
+    const idemKey = `${ctx.tenantId}:${order.storeId}:coupon-redeem:${idempotencyKey}`;
+    const previous = store.data.idempotency.get(idemKey);
+    if (previous) {
+      if (previous.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previous.response, duplicated: true }); return; }
+      runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch')); return;
+    }
     if ((order.grandTotal || 0) < coupon.minSpend) { runtime.json(res, 409, runtime.error('COUPON_NOT_APPLICABLE', 'minimum spend not reached')); return; }
     const amount = Math.min(coupon.amount, order.grandTotal || 0);
     const redemptionId = store.nextId('redemption');
@@ -581,16 +647,28 @@ function register(router, runtime) {
     store.data.coupons.set(coupon.id, nextCoupon);
     store.data.couponRedemptions.set(redemptionId, { id: redemptionId, tenantId: ctx.tenantId, couponId: coupon.id, orderId: order.id, amount, createdBy: ctx.userId, createdAt: runtime.nowIso() });
     runtime.addAudit(ctx, 'coupons.redeem', 'COUPON_REDEMPTION', redemptionId, null, { orderId: order.id, amount });
-    runtime.json(res, 200, { redemptionId, amount, order: nextOrder });
+    const response = { redemptionId, amount, order: nextOrder };
+    store.data.idempotency.set(idemKey, { fingerprint: runtime.requestFingerprint(body), response });
+    runtime.json(res, 200, response);
   });
 
   router.add('POST', '/api/v1/customers/points/adjust', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
     if (!requireFeature(runtime, res, ctx, 'MEMBERSHIP')) return;
-    const body = await runtime.parseBody(req);
+    let body;
+    try { body = await runtime.parseBody(req); } catch { runtime.json(res, 400, runtime.error('PAYLOAD_PARSE_ERROR', 'invalid JSON body')); return; }
+    // Points move real customer value — a replayed adjust must not double-apply.
+    const idempotencyKey = String(body.idempotencyKey || '').trim();
+    if (!idempotencyKey) { runtime.json(res, 400, runtime.error('IDEMPOTENCY_KEY_MISMATCH', 'idempotencyKey required')); return; }
     const customer = store.data.customers.get(body.customerId);
     const points = Number(body.points);
     if (!customer || customer.tenantId !== ctx.tenantId || !Number.isInteger(points) || points === 0 || !['EARN', 'REDEEM', 'ADJUST'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('POINTS_INVALID', 'customerId, integer points, reasonCode required')); return; }
+    const pointsIdemKey = `${ctx.tenantId}:points-adjust:${idempotencyKey}`;
+    const previousAdjust = store.data.idempotency.get(pointsIdemKey);
+    if (previousAdjust) {
+      if (previousAdjust.fingerprint === runtime.requestFingerprint(body)) { runtime.json(res, 200, { ...previousAdjust.response, duplicated: true }); return; }
+      runtime.json(res, 409, runtime.error('ORDER_IDEMPOTENCY_CONFLICT', 'idempotency key payload mismatch')); return;
+    }
     // Anti-fraud bounds: a rogue MANAGER could otherwise drain revenue by
     // self-redeeming arbitrary points. Per-call cap caps a single mistake;
     // per-customer-per-day cap prevents a slow drip across many calls.
@@ -619,12 +697,14 @@ function register(router, runtime) {
     const nextCustomer = { ...customer, points: nextPoints, updatedAt: runtime.nowIso() };
     store.data.customers.set(customer.id, nextCustomer);
     store.data.customerPoints.set(id, { id, tenantId: ctx.tenantId, customerId: customer.id, points, before: customer.points || 0, after: nextPoints, reasonCode: body.reasonCode, orderId: body.orderId || null, createdBy: ctx.userId, createdAt: runtime.nowIso() });
-    runtime.addAudit(ctx, 'customers.points.adjust', 'CUSTOMER_POINT', id, customer, nextCustomer);
+    runtime.addAudit(ctx, 'customers.points.adjust', 'CUSTOMER_POINT', id, { customerId: customer.id, lineBound: customer.lineBound, points: customer.points || 0 }, { customerId: nextCustomer.id, lineBound: nextCustomer.lineBound, points: nextCustomer.points });
     if (Math.abs(points) >= HIGH_VALUE_THRESHOLD) {
       runtime.addAudit(ctx, 'POINTS_HIGH_VALUE_ADJUST', 'CUSTOMER_POINT', id, null,
         { customerId: customer.id, points, reasonCode: body.reasonCode, dayTotalAbsAfter: dayTotalAbs + Math.abs(points) });
     }
-    runtime.json(res, 200, { pointLedgerId: id, customerId: customer.id, before: customer.points || 0, after: nextPoints });
+    const pointsResponse = { pointLedgerId: id, customerId: customer.id, before: customer.points || 0, after: nextPoints };
+    store.data.idempotency.set(pointsIdemKey, { fingerprint: runtime.requestFingerprint(body), response: pointsResponse });
+    runtime.json(res, 200, pointsResponse);
   });
 
   router.add('GET', '/api/v1/ai/daily-brief', async ({ res, ctx }) => {
