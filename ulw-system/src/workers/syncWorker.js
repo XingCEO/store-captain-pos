@@ -28,17 +28,16 @@ if (fs.existsSync(lockFile)) {
     logger.warn({ stalePid: pid }, 'removing stale worker lock');
   }
 }
-fs.writeFileSync(lockFile, String(process.pid));
-
-const runtime = createRuntime({ dataDir, publicDir });
-runtime.store.load();
-
-const worker = start(runtime);
+let runtime = null;
+let worker = null;
+let shuttingDown = false;
 
 function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ signal }, 'standalone syncWorker shutting down');
-  try { worker.stop(); } catch {}
-  try { runtime.store.close(); } catch {}
+  try { if (worker) worker.stop(); } catch {}
+  try { if (runtime) runtime.store.close(); } catch {}
   try { fs.unlinkSync(lockFile); } catch {}
   process.exit(0);
 }
@@ -49,5 +48,15 @@ process.on('uncaughtException', (err) => {
   logger.error({ err: err.message, stack: err.stack }, 'uncaughtException in standalone syncWorker');
   shutdown('uncaughtException');
 });
+
+// Register signal handlers before publishing the lock. Tests and supervisors use
+// the lock as readiness; publishing it too early lets SIGTERM arrive before the
+// process can clean up, which looks like a crash and leaves a stale lock.
+fs.writeFileSync(lockFile, String(process.pid));
+
+runtime = createRuntime({ dataDir, publicDir });
+runtime.store.load();
+
+worker = start(runtime);
 
 logger.info({ pid: process.pid, dataDir }, 'standalone syncWorker ready');
