@@ -27,6 +27,54 @@ const risk = require('./domains/risk');
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 10_000);
 const SHUTDOWN_GRACE_MS = Number(process.env.SHUTDOWN_GRACE_MS || 30_000);
 
+function isHexAes256Key(value) {
+  return typeof value === 'string' && /^[a-fA-F0-9]{64}$/.test(value);
+}
+
+function validateStartupEnvironment(env = process.env) {
+  const errors = [];
+  const warnings = [];
+  const isProduction = env.NODE_ENV === 'production';
+  const isDemo = env.DEMO_MODE === '1';
+
+  if (!isProduction) {
+    return { ok: true, serviceMode: 'development', errors, warnings };
+  }
+
+  if (!env.METRICS_TOKEN) errors.push('METRICS_TOKEN is required in production');
+  if (!env.PIN_PEPPER) errors.push('PIN_PEPPER is required in production');
+  if (!isHexAes256Key(env.MFA_KEK)) errors.push('MFA_KEK must be a 32-byte hex key in production');
+
+  const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+  if (allowedOrigins.length === 0) errors.push('ALLOWED_ORIGINS is required in production');
+  if (allowedOrigins.includes('*')) errors.push('ALLOWED_ORIGINS must not include * in production');
+  if (env.OMC_BOOTSTRAP_SEED_FIXED_PINS === '1') errors.push('OMC_BOOTSTRAP_SEED_FIXED_PINS is not allowed in production');
+
+  if (isDemo) {
+    if (env.ALLOW_MOCK_PAYMENT_PROVIDERS !== '1') errors.push('ALLOW_MOCK_PAYMENT_PROVIDERS=1 is required for production demo mode');
+    if (env.INVOICE_NON_PRODUCTION_ACK !== '1') errors.push('INVOICE_NON_PRODUCTION_ACK=1 is required for production demo mode');
+    warnings.push('sandbox/demo PoC running in production demo mode; invoice and non-cash payment flows are non-production');
+    return { ok: errors.length === 0, serviceMode: 'demo-production', errors, warnings };
+  }
+
+  if (env.ALLOW_MOCK_PAYMENT_PROVIDERS === '1') {
+    errors.push('ALLOW_MOCK_PAYMENT_PROVIDERS is only allowed with DEMO_MODE=1');
+  }
+  if (env.INVOICE_NON_PRODUCTION_ACK === '1') {
+    warnings.push('sandbox invoice routes are explicitly acknowledged as non-production');
+  }
+  if (env.ENABLE_HSTS !== '1') {
+    warnings.push('ENABLE_HSTS is not set; ensure HSTS is emitted by the TLS reverse proxy');
+  }
+
+  return {
+    ok: errors.length === 0,
+    serviceMode: env.INVOICE_NON_PRODUCTION_ACK === '1' ? 'starter-production-with-sandbox-invoice-ack' : 'starter-production',
+    errors,
+    warnings,
+  };
+}
+
 function createApp({ dataDir, publicDir, port }) {
   const runtime = createRuntime({ dataDir, publicDir });
   const router = createRouter(runtime);
@@ -169,39 +217,21 @@ function createApp({ dataDir, publicDir, port }) {
 
 if (require.main === module) {
   const PORT = Number(process.env.PORT || 3100);
+  const startup = validateStartupEnvironment(process.env);
+  if (!startup.ok) {
+    logger.error({ errors: startup.errors }, 'Refusing to start: production startup preflight failed.');
+    process.exit(1);
+  }
+  for (const warning of startup.warnings) logger.warn({ serviceMode: startup.serviceMode }, warning);
+
   const app = createApp({
-    dataDir: path.join(__dirname, '..', 'data'),
+    dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data'),
     publicDir: path.join(__dirname, '..', 'public'),
     port: PORT,
   });
 
-  if (process.env.NODE_ENV === 'production' && process.env.DEMO_MODE !== '1') {
-    logger.error('Refusing to start: ulw-system is sandbox/demo PoC. Set DEMO_MODE=1 or unset NODE_ENV=production.');
-    process.exit(1);
-  }
-  // When production + demo, require explicit per-subsystem ack so an operator
-  // cannot accidentally serve paying customers from the sandbox payment /
-  // invoice stack. Each ack independently signals "I know this is non-prod".
-  if (process.env.NODE_ENV === 'production' && process.env.DEMO_MODE === '1') {
-    const missingAcks = [];
-    if (process.env.ALLOW_MOCK_PAYMENT_PROVIDERS !== '1') missingAcks.push('ALLOW_MOCK_PAYMENT_PROVIDERS=1');
-    if (process.env.INVOICE_NON_PRODUCTION_ACK !== '1') missingAcks.push('INVOICE_NON_PRODUCTION_ACK=1');
-    if (missingAcks.length > 0) {
-      logger.error({ missingAcks },
-        'Refusing to start: NODE_ENV=production with DEMO_MODE=1 requires explicit non-production acks for every mock subsystem.');
-      process.exit(1);
-    }
-    logger.warn('WARNING: sandbox/demo PoC running with NODE_ENV=production and DEMO_MODE=1. Invoice and payment flows are stubs.');
-  }
-  // Metrics endpoint MUST be bearer-gated in production — it returns per-tenant
-  // counts that an unauthenticated attacker can scrape for competitive intel.
-  if (process.env.NODE_ENV === 'production' && !process.env.METRICS_TOKEN) {
-    logger.error('Refusing to start: NODE_ENV=production requires METRICS_TOKEN to protect /metrics.');
-    process.exit(1);
-  }
-
   app.listen(PORT, () => {
-    logger.info({ port: PORT }, 'Store Captain POS listening');
+    logger.info({ port: PORT, serviceMode: startup.serviceMode }, 'Store Captain POS listening');
   });
 
   async function shutdown(signal) {
@@ -213,4 +243,4 @@ if (require.main === module) {
   process.on('SIGINT',  () => shutdown('SIGINT'));
 }
 
-module.exports = { createApp };
+module.exports = { createApp, validateStartupEnvironment };

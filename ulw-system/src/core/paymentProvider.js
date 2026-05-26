@@ -223,10 +223,10 @@ if (allowMockProviders) {
 
 function defaultProviderFor(method) {
   switch (method) {
-    case 'CASH':   return cashDrawer;
-    case 'CARD':   return mockCard;
-    case 'QR':     return mockQr;
-    case 'MOBILE': return mockMobile;
+    case 'CASH':   return get('CASH_DRAWER');
+    case 'CARD':   return get('MOCK_CARD_PSP');
+    case 'QR':     return get('MOCK_QR_GATEWAY');
+    case 'MOBILE': return get('MOCK_LINE_PAY');
     default:       return null;
   }
 }

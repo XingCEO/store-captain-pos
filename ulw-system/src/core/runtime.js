@@ -8,7 +8,7 @@ const {
   entityList, persistEntities,
   appendAuditLog, queryAuditLogs, closeDatabase,
   idempotencyGet, idempotencyPut, idempotencyDelete, idempotencyPrune,
-  sessionGet, sessionPut, sessionDelete, sessionPrune,
+  sessionGet, sessionPut, sessionDelete,
 } = require('./db');
 const { logger } = require('./logger');
 const metrics = require('./metrics');
@@ -44,7 +44,7 @@ function clientIp(req) {
 // the `entities` table (one row per item) — persist() flushes only changed
 // rows, not a full snapshot. Idempotency keys + sessions + refresh tokens have
 // their own indexed tables (see db.js) fronted by SqliteBackedMap, so they MUST
-// NOT also live here or startup would double-count them. See `liveTables` below.
+// NOT also live here or startup would double-count them.
 const persistedMaps = [
   'products', 'skus', 'productPrices',
   'orders', 'orderItems', 'orderEvents',
@@ -59,11 +59,6 @@ const persistedMaps = [
   'inventoryLevels', 'inventoryLedger', 'stockCounts', 'transferOrders', 'purchaseOrders',
   'recipes', 'recipeItems',
 ];
-
-// Live tables — Map-compatible API but backed by indexed SQLite tables.
-// These survive crashes mid-snapshot and can be pruned via SQL on the worker
-// tick rather than scanning a Map.
-const liveTables = ['idempotency', 'orderIdempotency', 'sessions', 'refreshTokens'];
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
