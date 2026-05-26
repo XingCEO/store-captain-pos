@@ -5,6 +5,21 @@ const { roleRank } = require('../core/runtime');
 const { requireFeature } = require('../core/entitlements');
 const invoiceProvider = require('../core/invoiceProvider');
 
+function requireInvoiceProviderAllowed(runtime, res, provider = null) {
+  const environment = provider && provider.capabilities ? provider.capabilities.environment : 'sandbox';
+  const nonProductionProvider = environment !== 'production';
+  const acknowledged = process.env.INVOICE_NON_PRODUCTION_ACK === '1';
+  if (process.env.NODE_ENV === 'production' && nonProductionProvider && !acknowledged) {
+    res.setHeader('x-environment', 'disabled');
+    runtime.json(res, 403, runtime.error('NON_PRODUCTION_FEATURE_DISABLED', 'sandbox invoice provider is disabled in production', {
+      feature: 'SANDBOX_INVOICE',
+      requiredEnv: 'INVOICE_NON_PRODUCTION_ACK=1',
+    }));
+    return false;
+  }
+  return true;
+}
+
 function dayRange(date) {
   return { from: `${date}T00:00:00.000Z`, to: `${date}T23:59:59.999Z` };
 }
@@ -94,6 +109,7 @@ function register(router, runtime) {
 
   router.add('GET', '/api/v1/invoices/health', async ({ res, ctx, url }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireInvoiceProviderAllowed(runtime, res)) return;
     const storeId = url.searchParams.get('storeId') || ctx.storeId;
     if (!runtime.requireStoreScope(res, ctx, storeId)) return;
     const invoices = invoiceRows(runtime, ctx, storeId);
@@ -105,6 +121,7 @@ function register(router, runtime) {
 
   router.add('POST', '/api/v1/invoices/issue-sandbox', async ({ req, res, ctx }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireInvoiceProviderAllowed(runtime, res)) return;
     const body = await runtime.parseBody(req);
     const order = store.data.orders.get(body.orderId);
     if (!order || order.tenantId !== ctx.tenantId || order.paymentState !== 'PAID') { runtime.json(res, 404, runtime.error('INVOICE_ORDER_NOT_READY', 'paid order not found')); return; }
@@ -126,6 +143,7 @@ function register(router, runtime) {
     if (!runtime.requireStoreScope(res, ctx, invoice.storeId)) return;
     const body = await runtime.parseBody(req).catch(() => ({}));
     const provider = invoiceProvider.active();
+    if (!requireInvoiceProviderAllowed(runtime, res, provider)) return;
     const attempts = (invoice.attempts || 0) + 1;
     try {
       const result = await provider.upload({
@@ -168,6 +186,7 @@ function register(router, runtime) {
 
   router.add('POST', /^\/api\/v1\/invoices\/([\w-]+)\/mark-uploaded$/, async ({ res, ctx, params }) => {
     if (!runtime.requireTenant(res, ctx) || !runtime.requireRole(res, ctx, 'MANAGER')) return;
+    if (!requireInvoiceProviderAllowed(runtime, res)) return;
     const invoice = store.data.invoices.get(params[0]);
     if (!invoice || invoice.tenantId !== ctx.tenantId) { runtime.json(res, 404, runtime.error('INVOICE_NOT_FOUND', 'invoice not found')); return; }
     if (!runtime.requireStoreScope(res, ctx, invoice.storeId)) return;
@@ -191,6 +210,7 @@ function register(router, runtime) {
     if (!['ORDER_VOID', 'INPUT_ERROR', 'CUSTOMER_RETURN'].includes(body.reasonCode)) { runtime.json(res, 400, runtime.error('INVOICE_VOID_INVALID', 'reasonCode invalid')); return; }
     // 作廢 must round-trip the invoice provider, not just flip a local flag.
     const provider = invoiceProvider.active();
+    if (!requireInvoiceProviderAllowed(runtime, res, provider)) return;
     const alreadyUploaded = invoice.lifecycleState === 'UPLOADED' || invoice.lifecycleState === 'ALLOWANCE';
     let voidResult;
     try {
