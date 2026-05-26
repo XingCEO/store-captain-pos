@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { startTestServer, stopTestServer, request, loginAs } = require('./helpers');
+const { startTestServer, stopTestServer, request } = require('./helpers');
 
 async function login(port, tenantId) {
   const res = await request(port, 'POST', '/api/v1/auth/login', { tenantId, role: 'MANAGER', storeId: 'store-001', pin: '5001' });
