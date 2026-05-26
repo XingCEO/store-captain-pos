@@ -2,7 +2,9 @@
 
 本文件描述 ulw-system 從開發切換到正式環境前必須完成的部署層工作。對齊 `docs/high-risk-workstreams.md` 的 go-gate 與 `docs/problem-review.md` 的「目前實作差距」。
 
-> ⚠️ ulw-system 目前仍是 sandbox/PoC。在金流、電子發票、合規文件未完成前，**禁止對非簽約客戶開放**；本文件僅描述「Beta / 示範環境」與「正式商用環境」共通的部署最低門檻。
+> ✅ ulw-system 可部署為「Starter 正式服務」：POS 收銀、商品/菜單、接單池、現金收款、手動付款紀錄、日報、角色權限、audit、離線 outbox 與人工同步補救。正式電子發票、正式刷卡 / QR / LINE Pay、AI 自動決策、連鎖總部與完整庫存仍受 `docs/high-risk-workstreams.md` go-gate 限制。
+
+> ⚠️ 對外銷售前必須用合約與頁面明確標示：非現金支付仍為「手動紀錄」或未啟用；電子發票若未串接加值中心，只能稱「串接驗證 / sandbox 健康檢查」，不得宣稱合法正式開立。
 
 ## 1. TLS 終端與反向代理
 
@@ -88,10 +90,10 @@ TRUST_PROXY=1
 | `MFA_KEK` | 是 | 32-byte hex AES-256-GCM key for TOTP secret encryption |
 | `TRUST_PROXY` | 是 (若有反代) | 啟用 XFF 解析 |
 | `ALLOWED_ORIGINS` | 是 | CORS 白名單, 逗號分隔, **不可含 `*` 配 credentials** |
-| `OMC_BOOTSTRAP_SEED_FIXED_PINS` | 否 | 設為 `1` 時 prod 也使用 dev 預設 PIN，**僅供緊急復原** |
-| `ALLOW_MOCK_PAYMENT_PROVIDERS` | 否 | 顯式承認非生產 mock 卡片/QR/Mobile provider 之必填 ack；正式 PSP 上線後拿掉 |
-| `INVOICE_NON_PRODUCTION_ACK` | 否 | 顯式承認電子發票仍為 sandbox 之必填 ack；正式加值中心上線後拿掉 |
-| `DEMO_MODE` | 否 | 設為 `1` 時 prod 允許跑 sandbox 路徑 (上述兩個 ack 必填) |
+| `OMC_BOOTSTRAP_SEED_FIXED_PINS` | 否 | production 啟動會拒絕；僅限非正式復原環境 |
+| `ALLOW_MOCK_PAYMENT_PROVIDERS` | 否 | 只允許搭配 `DEMO_MODE=1`；正式 Starter 不可啟用 mock 卡片/QR/Mobile provider |
+| `INVOICE_NON_PRODUCTION_ACK` | 否 | 顯式承認電子發票仍為 sandbox；未設定時 production 會封鎖 sandbox 發票路由 |
+| `DEMO_MODE` | 否 | 設為 `1` 時 prod 進入示範模式，`ALLOW_MOCK_PAYMENT_PROVIDERS=1` 與 `INVOICE_NON_PRODUCTION_ACK=1` 都必填 |
 | `DATA_DIR` | 否 | SQLite snapshot 位置 (預設 `./data`) |
 | `DISABLE_BACKGROUND_WORKERS` | 否 | 跑回歸測試時可關 |
 | `LOG_LEVEL` | 否 | `info` / `debug` / `warn` / `error` |
@@ -100,7 +102,7 @@ TRUST_PROXY=1
 | `METRICS_TOKEN` 產生 | 一次性 | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `PIN_PEPPER` 產生 | 一次性 | `node -e "console.log(require('crypto').randomBytes(24).toString('base64'))"` |
 
-正式環境**未設**這三個密鑰 (`METRICS_TOKEN` / `PIN_PEPPER` / `MFA_KEK`) 啟動會拒絕或退化為 dev 模式 — 上線前必須各自輪換並寫進 secret manager (建議 Doppler / Vault / Bitwarden Secrets Manager)。
+正式環境**未設** `METRICS_TOKEN` / `PIN_PEPPER` / `MFA_KEK` / `ALLOWED_ORIGINS`，或 `ALLOWED_ORIGINS=*`，啟動會拒絕。上線前必須各自輪換並寫進 secret manager (建議 Doppler / Vault / Bitwarden Secrets Manager)。
 
 ## 3. Process supervisor
 
@@ -196,8 +198,8 @@ scrape_configs:
 - [ ] Prometheus / Grafana scrape OK, 4 條核心告警都有 oncall 對應人
 - [ ] `/health` 由負載平衡 / 上層監控每 30 秒呼叫
 - [ ] 上線當下執行 `npm test` (131 PASS) + `node scripts/smoke.js` + `node scripts/verify-flows.js` (33 PASS)
-- [ ] 金流尚未串接 PSP: 不對外宣傳「刷卡 / QR / LINE Pay」, mock provider 已 ack `ALLOW_MOCK_PAYMENT_PROVIDERS=1`
-- [ ] 電子發票尚未串接加值中心: 不對外宣傳「合法電子發票」, `INVOICE_NON_PRODUCTION_ACK=1` 已 ack
+- [ ] 金流尚未串接 PSP: 不對外宣傳「刷卡 / QR / LINE Pay」；正式 Starter 不設定 `ALLOW_MOCK_PAYMENT_PROVIDERS`
+- [ ] 電子發票尚未串接加值中心: 不對外宣傳「合法電子發票」；若需 sandbox 健康檢查，合約與環境必須明示 `INVOICE_NON_PRODUCTION_ACK=1`
 - [ ] 隱私權 / 服務條款 / DPA / 個資告知 / 外洩通報 SOP 已由律師審閱 (見 `docs/compliance-guardrails.md`)
 
 ## 7. Roll-back 步驟

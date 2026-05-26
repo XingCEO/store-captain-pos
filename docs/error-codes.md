@@ -11,6 +11,7 @@
 | TENANT_NOT_AUTHORIZED | 403 | 租戶權限不足或未授權 | GET /api/v1/orders/:id, GET /api/v1/orders/:id/events, GET /api/v1/reports/exports/:id/download, ... | 否 |
 | PATH_NOT_FOUND | 404 | 路由不存在 | 任意未定義的路徑 | 否 |
 | PERMISSION_DENIED | 403 | 角色權限不足 | POST /api/v1/catalog/prices/batch (SUPERVISOR+), PATCH /api/v1/users/:id (MANAGER+), ... | 否 |
+| NON_PRODUCTION_FEATURE_DISABLED | 403 | 正式環境未啟用非正式功能 | sandbox 發票路由在未設定 `INVOICE_NON_PRODUCTION_ACK=1` 時 | 否 |
 | DATE_RANGE_INVALID | 400 | 日期範圍或格式無效 | GET /api/v1/reconciliation/daily, GET /api/v1/reports/daily, GET /api/v1/reports/payment-breakdown, GET /api/v1/reports/top-products, POST /api/v1/reports/exports | 否 |
 | DEVICE_MISMATCH | 400 | 設備或租戶識別不符 | GET /api/v1/telemetry/dashboard | 否 |
 
