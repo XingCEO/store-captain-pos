@@ -415,11 +415,51 @@ function cartTotal() {
   return state.cart.reduce((sum, item) => sum + item.qty * item.price, 0);
 }
 
+function setButtonState(id, disabled) {
+  const button = $(id);
+  if (button) button.disabled = disabled;
+}
+
+function updateProductSummary() {
+  const summary = $('productSummary');
+  if (!summary) return;
+  const total = state.products.length;
+  if (total === 0) {
+    summary.textContent = '尚未載入商品';
+    return;
+  }
+  const query = $('productSearch').value.trim();
+  const categoryLabel = categoryNames[state.category] || state.category;
+  summary.textContent = `顯示 ${visibleProducts().length}/${total} 項 · ${categoryLabel}${query ? ` · 搜尋「${query}」` : ''}`;
+}
+
+function updateCheckoutActions(cartCount) {
+  const hasActiveOrder = Boolean(state.activeOrderId);
+  setButtonState('submitOrder', cartCount === 0 || hasActiveOrder);
+  setButtonState('payOrder', !hasActiveOrder);
+  setButtonState('cardOrder', !hasActiveOrder);
+  setButtonState('voidOrder', !hasActiveOrder);
+  setButtonState('applyDiscount', !hasActiveOrder);
+  setButtonState('redeemCoupon', !hasActiveOrder);
+  setButtonState('splitTender', !hasActiveOrder);
+  setButtonState('refundOrder', !state.lastPaidOrderId);
+  setButtonState('reprintReceipt', !state.lastPaidOrder);
+  const hint = $('checkoutHint');
+  if (!hint) return;
+  if (hasActiveOrder) hint.textContent = '訂單已送出，下一步選擇付款、折扣或作廢。';
+  else if (cartCount > 0) hint.textContent = `已選 ${cartCount} 件，送出訂單後才能結帳。`;
+  else if (state.lastPaidOrder) hint.textContent = '上一筆已結帳，可重印收據或建立 QR 取餐連結。';
+  else hint.textContent = '先點商品加入交易。';
+}
+
 function updateMetrics() {
+  const cartCount = state.cart.reduce((sum, item) => sum + item.qty, 0);
   $('metricProducts').textContent = state.products.length;
-  $('metricCart').textContent = state.cart.reduce((sum, item) => sum + item.qty, 0);
+  $('metricCart').textContent = cartCount;
   $('activeOrderLabel').textContent = state.activeOrderId ? `訂單 ${state.activeOrderId}` : '尚未建單';
   $('cartTotal').textContent = money(state.activeOrderId ? state.activeOrderTotal : cartTotal());
+  updateProductSummary();
+  updateCheckoutActions(cartCount);
 }
 
 function visibleProducts() {
